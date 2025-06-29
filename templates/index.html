@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon" href="/static/xiaoba_192.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <title>{{lanlan_name}} Terminal - Project Lanlan</title>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            /*background: #fff;*/
+            background: transparent;
+            color: #222;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            pointer-events: none; /* 允许鼠标事件穿透 */
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 0.85;
+                transform: translateY(0);
+            }
+        }
+        
+
+        /* 响应式设计 */
+        @media (max-width: 480px) {
+            .container {
+                width: 100%;
+                height: 100%;
+            }
+        }
+
+        #live2d-container {
+            position: fixed;
+            right: 0px;
+            bottom: 0px;
+            width: 30%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            background: none;
+            opacity: 1;
+            overflow: hidden;
+            visibility: visible;
+            transition: all 1s ease-in-out, height 0ms 1s, width 0ms 1s, visibility 0ms 1s;
+        }
+
+        #live2d-container.minimized {
+            right: -800px; /* 向右侧移出屏幕 */
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        #live2d-canvas {
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            /*width: auto;*/
+            /*height: auto;*/
+            display: block;
+            opacity: 1;
+            visibility: visible;
+            background: transparent;
+        }
+
+        #live2d-canvas.minimized {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        #chat-container {
+            margin-bottom: 50px;
+            pointer-events: auto; /* 恢复鼠标交互 */
+            position: fixed;
+            left: 20px;
+            bottom: 20px;
+            width: 340px;
+            max-height: 300px;
+            height: 300px;
+            background: #f7f8fa;
+            opacity: 0.7;
+            border-radius: 12px;
+            padding: 16px;
+            box-sizing: border-box;
+            overflow: hidden; /* 重要：改为 hidden，滚动交给内部 wrapper */
+            z-index: 20;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            scroll-behavior: smooth;
+            display: flex; /* 使用 flex 布局 */
+            flex-direction: column;
+            /* 添加过渡效果，让尺寸变化平滑 */
+            transition: width 0.3s ease, height 0.3s ease, max-height 0.3s ease, padding 0.3s ease;
+        }
+
+        /* 内部内容包裹器，负责滚动 */
+        #chat-content-wrapper {
+            pointer-events: auto; /* 恢复鼠标交互 */
+            flex-grow: 1; /* 占据可用空间 */
+            padding: 16px; /* 内边距移到这里 */
+            padding-left: 8px; /* 内边距移到这里 */
+            overflow-y: auto; /* 滚动条在这里 */
+            scroll-behavior: smooth;
+            /* 添加过渡，让内容隐藏/显示更平滑 */
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            opacity: 0.7;
+            visibility: visible;
+        }
+
+        /* 切换按钮样式 */
+        #toggle-chat-btn {
+            pointer-events: auto; /* 恢复鼠标交互 */
+            position: absolute; /* 绝对定位于容器内 */
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            background: #e0e1e2;
+            opacity: 0.8;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            line-height: 18px; /* 垂直居中 */
+            text-align: center;
+            z-index: 21; /* 确保在内容之上 */
+            padding: 0;
+        }
+
+        #toggle-chat-btn:hover {
+            background: #cacbcd;
+        }
+
+        /* --- 最小化状态 --- */
+        #chat-container.minimized {
+            background: transparent;
+            opacity: 1;
+            width: 60px; /* 最小化宽度 */
+            height: 40px; /* 最小化高度 */
+            max-height: 40px;
+            padding: 0; /* 移除内边距 */
+            cursor: pointer; /* 让整个小方块可点击（虽然按钮也在） */
+        }
+
+        #chat-container.minimized #chat-content-wrapper {
+            /* 隐藏内容区域 */
+            opacity: 0;
+            visibility: hidden;
+            height: 0; /* 确保不占空间 */
+            padding: 0;
+            overflow: hidden; /* 隐藏滚动条 */
+        }
+
+        #chat-container.minimized #toggle-chat-btn {
+            /* 将按钮居中显示 */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #input-row {
+            display: flex;
+            margin-top: 12px;
+        }
+
+        #userInput {
+            flex: 1;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+            background: #fff;
+            color: #222;
+        }
+
+        #sendButton {
+            margin-left: 8px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            background: #4f8cff;
+            color: #fff;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #sendButton:active {
+            background: #2662c8;
+        }
+
+        #sendButton:disabled {
+            background: #b0c4de;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        #sidebar {
+            /*background: #f7f8fa;*/
+            /*opacity: 0.7;*/
+            border-radius: 12px;
+            box-sizing: border-box;
+            box-shadow: None;
+
+            background: transparent;
+            pointer-events: auto; /* 恢复鼠标交互 */
+            position: fixed;
+            left: 20px;
+            top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 20;
+            min-width: 150px;
+            transition: width 0.3s ease, min-width 0.3s ease, height 0.3s ease, padding 0.3s ease, opacity 0.3s;
+        }
+
+        #sidebar.minimized {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            width: 48px;
+            min-width: 0;
+            height: 48px;
+            padding: 0;
+            opacity: 0.9;
+            background: transparent;
+            gap: 0;
+            overflow: hidden;
+            /* 只显示折叠按钮 */
+            position: fixed;
+            left: 20px;
+            top: 20px;
+        }
+
+        #sidebar.minimized .side-btn:not(#toggle-sidebar-btn) {
+            display: none;
+        }
+
+        #sidebar.minimized #status {
+            display: none;
+        }
+
+        #toggle-sidebar-btn {
+            position: absolute;
+
+            top: -10px;
+            right: -10px;
+            width: 24px;
+            height: 24px;
+            padding: 0;
+
+            font-weight: bold;
+            text-align: center;
+
+            pointer-events: auto;
+            z-index: 31;
+            background: #e0e1e2;
+            color: #333;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+
+        #sidebar.minimized #toggle-sidebar-btn {
+            /* 将按钮居中显示 */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #toggle-sidebar-btn:hover {
+            background: #cacbcd;
+        }
+
+        .side-btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            background: #333;
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-bottom: 4px;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+
+        .side-btn:active {
+            background: #555;
+        }
+
+        .side-btn:disabled {
+            background: #e0e0e0;
+            color: #888;
+            cursor: not-allowed;
+            border: 1px solid #ccc;
+            opacity: 0.7;
+        }
+
+        .side-btn:hover:not(:disabled) {
+            background: #4f8cff;
+            color: #fff;
+        }
+
+        #status {
+            /*margin-top: 5px;*/
+            color: #4f8cff;
+            background: transparent;
+            font-size: 0.95rem;
+            max-width: 150px;
+            word-break: break-all;
+        }
+
+        @media only screen and (max-width: 768px) {
+            #live2d-container {
+                position: fixed;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 5;
+            }
+
+            #chat-container {
+                width: 45vw;
+                left: 0;
+                bottom: 0;
+                max-height: 40vh;
+                height: 40vh;
+                padding: 0;
+                margin-bottom: 5px;
+            }
+
+            #sidebar {
+                left: 5vw;
+                top: 5vh;
+                width: 90vw;
+                flex-direction: row;
+                flex-wrap: wrap;
+                /*gap: 8px;*/
+            }
+
+            .side-btn {
+                flex: 1 1 40%;
+                padding: 6px 10px;
+                font-size: 0.85rem;
+            }
+        }
+
+    </style>
+</head>
+<body>
+<div id="sidebar">
+    <button id="toggle-sidebar-btn" title="折叠侧边栏">—</button>
+    <button id="micButton" class="side-btn">🎤 开始聊天</button>
+    <button id="muteButton" class="side-btn" disabled>⏸️ 休息一下</button>
+    <button id="screenButton" class="side-btn">🖥️ 屏幕共享</button>
+    <button id="stopButton" class="side-btn" disabled>🛑 暂停共享</button>
+    <button id="resetSessionButton" class="side-btn" disabled>👋 请她离开</button>
+    <div id="status"></div>
+</div>
+<div id="chat-container">
+    <button id="toggle-chat-btn" title="Minimize">—</button>
+    <div id="chat-content-wrapper">
+        <div id="chatContainer"></div>
+        <!--      <div id="input-row">-->
+        <!--          <input type="text" id="userInput" placeholder="输入你的消息..." autocomplete="off"/>-->
+        <!--          <button id="sendButton">发送</button>-->
+        <!--      </div>-->
+    </div>
+</div>
+<div id="live2d-container">
+    <canvas id="live2d-canvas"></canvas>
+</div>
+
+<!-- Cubism 4核心库（支持Cubism 3/4模型） -->
+<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+<!-- Cubism 2.1核心库（支持旧模型） -->
+<script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+<!-- PixiJS v7 CDN -->
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/pixi.min.js"></script>
+<!-- pixi-live2d-display v0.5.0-ls-6（RaSan147 fork，支持v7） -->
+<script src="https://cdn.jsdelivr.net/gh/RaSan147/pixi-live2d-display@v0.5.0-ls-6/dist/index.min.js"></script>
+
+<script> // 聊天框自动滚动至底部，可最小化
+// 获取聊天容器元素
+const chatContainer = document.getElementById('chat-container');
+const chatContentWrapper = document.getElementById('chat-content-wrapper');
+const toggleBtn = document.getElementById('toggle-chat-btn');
+
+// 定义一个滚动到底部的函数
+function scrollToBottom() {
+    if (chatContentWrapper && !chatContainer.classList.contains('minimized')) {
+        chatContentWrapper.scrollTop = chatContentWrapper.scrollHeight;
+    }
+}
+
+// --- 添加新消息函数 (修正) ---
+function addNewMessage(messageHTML) {
+    if (!chatContentWrapper) return; // 安全检查
+
+    const newMessageElement = document.createElement('div');
+    newMessageElement.innerHTML = messageHTML;
+    chatContentWrapper.appendChild(newMessageElement);
+
+    // 确保在添加消息后立即滚动到底部
+    setTimeout(scrollToBottom, 10); // 短暂延迟确保DOM更新
+}
+
+// --- 切换聊天框最小化/展开状态 ---
+toggleBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+
+    const isMinimized = chatContainer.classList.toggle('minimized');
+
+    if (isMinimized) {
+        // 刚刚最小化
+        toggleBtn.textContent = '+';
+        toggleBtn.title = 'Restore';
+    } else {
+        // 刚刚还原展开
+        toggleBtn.textContent = '-';
+        toggleBtn.title = 'Minimize';
+        // 还原后滚动到底部
+        setTimeout(scrollToBottom, 300); // 给CSS过渡留出时间
+    }
+});
+
+// 让最小化后的小方块本身也能点击还原
+chatContainer.addEventListener('click', (event) => {
+    if (chatContainer.classList.contains('minimized') && event.target === chatContainer) {
+        toggleBtn.click();
+    }
+});
+
+// --- Sidebar 折叠/展开功能 ---
+const sidebar = document.getElementById('sidebar');
+const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
+
+toggleSidebarBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const isMinimized = sidebar.classList.toggle('minimized');
+    if (isMinimized) {
+        toggleSidebarBtn.textContent = '+';
+        toggleSidebarBtn.title = '展开侧边栏';
+    } else {
+        toggleSidebarBtn.textContent = '-';
+        toggleSidebarBtn.title = '折叠侧边栏';
+    }
+});
+
+// 允许点击整个 sidebar 区域还原
+sidebar.addEventListener('click', (event) => {
+    if (sidebar.classList.contains('minimized') && event.target === sidebar) {
+        toggleSidebarBtn.click();
+    }
+});
+
+// --- 初始化 ---
+document.addEventListener('DOMContentLoaded', () => {
+    // 设置初始按钮状态 - 聊天框
+    if (chatContainer && toggleBtn) {
+        if (chatContainer.classList.contains('minimized')) {
+            toggleBtn.textContent = '+';
+            toggleBtn.title = 'Restore';
+        } else {
+            toggleBtn.textContent = '-';
+            toggleBtn.title = 'Minimize';
+            scrollToBottom(); // 初始加载时滚动一次
+        }
+    }
+
+    // 设置初始按钮状态 - 侧边栏
+    if (sidebar && toggleSidebarBtn) {
+        if (sidebar.classList.contains('minimized')) {
+            toggleSidebarBtn.textContent = '+';
+            toggleSidebarBtn.title = '展开侧边栏';
+        } else {
+            toggleSidebarBtn.textContent = '-';
+            toggleSidebarBtn.title = '折叠侧边栏';
+        }
+    }
+
+    // 确保自动滚动在页面加载后生效
+    scrollToBottom();
+});
+
+// 监听 DOM 变化，确保新内容添加后自动滚动
+const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+        if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+            scrollToBottom();
+        }
+    });
+});
+
+// 开始观察聊天内容区域的变化
+if (chatContentWrapper) {
+    observer.observe(chatContentWrapper, {childList: true, subtree: true});
+}
+
+</script>
+
+<script>
+
+    /*function add_controller(model) {
+        model.internalModel.coreModel.setParameterValueById('Param97', 1.0);
+    }
+
+    function remove_controller(model) {
+        model.internalModel.coreModel.setParameterValueById('Param97', 0.0);
+    }
+
+    function add_tongue(model) {
+        model.internalModel.coreModel.setParameterValueById('Param78', 1.0);
+    }
+
+    function remove_tongue(model) {
+        model.internalModel.coreModel.setParameterValueById('Param78', 0.0);
+    }
+
+    function add_tears(model) {
+        model.internalModel.coreModel.setParameterValueById('Param105', 5.0);
+    }
+
+    function remove_tears(model) {
+        model.internalModel.coreModel.setParameterValueById('Param105', 0.0);
+    }
+
+    function add_mask(model) {
+        model.internalModel.coreModel.setParameterValueById('kouzhao', 1.0);
+    }
+
+    function remove_mask(model) {
+        model.internalModel.coreModel.setParameterValueById('kouzhao', 0.0);
+    }
+
+    function add_stars(model) {
+        model.internalModel.coreModel.setParameterValueById('Param107', 1.0);
+    }
+
+    function remove_stars(model) {
+        model.internalModel.coreModel.setParameterValueById('Param107', 0.0);
+    }
+
+    function add_hearts(model) {
+        model.internalModel.coreModel.setParameterValueById('Param106', 1.0);
+    }
+
+    function remove_hearts(model) {
+        model.internalModel.coreModel.setParameterValueById('Param106', 0.0);
+    }
+
+    function add_anger(model) {
+        model.internalModel.coreModel.setParameterValueById('Param104', 1.0);
+    }
+
+    function remove_anger(model) {
+        model.internalModel.coreModel.setParameterValueById('Param104', 0.0);
+    }
+
+    function remove_all(model) {
+        model.internalModel.coreModel.setParameterValueById('Param104', 0.0);
+        model.internalModel.coreModel.setParameterValueById('Param106', 0.0);
+        model.internalModel.coreModel.setParameterValueById('Param107', 0.0);
+        model.internalModel.coreModel.setParameterValueById('kouzhao', 0.0);
+        model.internalModel.coreModel.setParameterValueById('Param105', 0.0);
+        model.internalModel.coreModel.setParameterValueById('Param78', 0.0);
+        model.internalModel.coreModel.setParameterValueById('Param97', 0.0);
+    }
+
+    let expressions_map = {
+        "手柄+": add_controller,
+        "手柄-": remove_controller,
+        "舌头+": add_tongue,
+        "舌头-": remove_tongue,
+        "眼泪+": add_tears,
+        "眼泪-": remove_tears,
+        "口罩+": add_mask,
+        "口罩-": remove_mask,
+        "星星眼+": add_stars,
+        "星星眼-": remove_stars,
+        "爱心+": add_hearts,
+        "爱心-": remove_hearts,
+        "生气+": add_anger,
+        "生气-": remove_anger,
+        "-": remove_all,
+    }*/
+
+    window.PIXI = PIXI;
+    const cubism4Model = "{{model_path}}";  
+    const {Live2DModel} = PIXI.live2d;
+    (async function () {
+        // 帧率控制函数
+        function setupFrameSkipping() {
+            // 停止默认的ticker
+            pixi_app.ticker.stop();
+
+            // 创建一个新的ticker
+            let frameCount = 0;
+            const frameSkip = 0; // 跳1帧，即每2帧渲染一次
+
+            // 使用PIXI的shared ticker
+            PIXI.Ticker.shared.add(() => {
+                frameCount++;
+                // 当frameCount是frameSkip+1的倍数时渲染
+                // 例如，frameSkip=1时，每当frameCount为2、4、6...时渲染
+                if (frameCount % (frameSkip + 1) === 0) {
+                    pixi_app.render();
+                }
+            });
+
+            // 启动shared ticker
+            PIXI.Ticker.shared.start();
+        }
+
+
+        const pixi_app = new PIXI.Application({
+            view: document.getElementById('live2d-canvas'),
+            resizeTo: document.getElementById('live2d-container'),
+            transparent: true,
+            backgroundAlpha: 0
+        });
+        const model = await Live2DModel.from(cubism4Model);
+        if (window.innerWidth <= 768){  //移动端
+            const scale = Math.min(
+                0.5,
+              window.innerHeight * 1.3 / 4000,
+              window.innerWidth * 1.2 / 2000
+            );
+            model.scale.set(scale);
+            model.x = pixi_app.renderer.width*0.5;
+            model.y = pixi_app.renderer.height*0.28;//pixi_app.renderer.height*0.5;
+            model.anchor.set(0.5, 0.1);
+            pixi_app.stage.addChild(model);
+            window.addEventListener('resize', () => {
+                // 更新模型位置
+                model.x = pixi_app.renderer.width*0.5;
+                model.y = pixi_app.renderer.height*0.28;//pixi_app.renderer.height*0.5;
+            });
+        }
+        else {
+            const scale = Math.min(
+                0.5,
+              (window.innerHeight * 0.75) / 7000, // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
+              (window.innerWidth * 0.6) / 7000 // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
+            );
+            model.scale.set(scale);
+            // model.scale.set(1.0, 1.0);
+            // model.scale.set(0.18, 0.18);
+            model.x = pixi_app.renderer.width;
+            model.y = pixi_app.renderer.height;
+            // model.anchor.set(0.9, 0.68);
+            // model.anchor.set(0.7, 0.65);
+            model.anchor.set(0.65, 0.75); // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
+            // model.anchor.set(1., 1.);
+            pixi_app.stage.addChild(model);
+
+            window.addEventListener('resize', () => {
+                // 更新模型位置
+                model.x = pixi_app.renderer.width;
+                model.y = pixi_app.renderer.height;
+            });
+            // setupFrameSkipping();
+        }
+        window.LanLan1 = window.LanLan1 || {};
+        window.LanLan1.live2dModel = model;
+        /*for (const func in expressions_map) {
+            originalFunc = expressions_map[func];
+            expressions_map[func] = (function(originalFunc, model) {
+                return function() {
+                  return originalFunc(model);
+                };
+              })(expressions_map[func], model);
+        }
+        window.LanLan1.registered_expressions = expressions_map*/
+    })();
+
+
+</script>
+<script>
+    // 从模板变量中注入值
+    const lanlan_config = {
+        lanlan_name: "{{lanlan_name}}"
+    };
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
+
