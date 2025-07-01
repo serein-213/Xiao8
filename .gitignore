@@ -1,1 +1,15 @@
+# 忽略敏感配置
 core_config.txt
+
+# 忽略日志文件
+*.log
+
+# 忽略内存文件
+D:\Project\Xiao8\memory\store\
+
+# 忽略临时文件
+*.tmp
+
+# 忽略python缓存文件
+**/__pycache__/
+*.py[cod]
