@@ -1,6 +1,6 @@
 <div align="center">
 
-![小八Logo](asset/xiaoba_logo.jpg)
+![小八Logo](assets/xiaoba_logo.jpg)
 
 # Project ~~Chat酱~~ ~~Lanlan~~ ~~小八~~ 兰兰
 
