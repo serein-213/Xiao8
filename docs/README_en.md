@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)]()
 
-**Even my grandpa can set up this cyber catgirl in 3 minutes!**
+**:neckbeard: Even my grandpa can set up this cyber catgirl in 3 minutes!**
 
 </div>
 
