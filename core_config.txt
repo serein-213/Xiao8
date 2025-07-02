@@ -1,4 +1,0 @@
-{
-  "apiBaseUrl": "http://localhost:48911/",
-  "coreApiKey": ""
-}

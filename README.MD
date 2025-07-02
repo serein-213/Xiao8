@@ -1,6 +1,6 @@
 <div align="center">
 
-![小八Logo](asset/xiaoba_logo.jpg)
+![小八Logo](assets/xiaoba_logo.jpg)
 
 # Project ~~Chat酱~~ ~~Lanlan~~ ~~小八~~ 兰兰
 
@@ -42,7 +42,7 @@
 
 **注意：点击"开始聊天"后，请耐心等待3秒，否则首句对话会出现延迟（或者被吞掉）。**
 
-*对于开发者，请在新建conda环境后，依次执行`conda install -y -c conda-forge pynini==2.1.5`和`pip install -r requirements.txt`安装依赖。然后执行`python memory_server.py`和`python main_server.py`。最后通过main server中指定的端口访问网页版。*
+*对于开发者，请在新建conda环境后，执行`pip install -r requirements.txt`安装依赖。然后执行`python memory_server.py`和`python main_server.py`。最后通过main server中指定的端口访问网页版。*
 
 # 进阶内容
 
@@ -62,7 +62,7 @@ Live2D模型的路径参数目前硬编码在了`main_server.py`里的`"model_pa
 
 ## D. 参与开发
 
-本项目环境依赖非常简单，请在`python3.12`环境中依次执行`conda install -y -c conda-forge pynini==2.1.5`和`pip install -r requirements.txt`即可。开发者建议加入企鹅群1048307485，猫娘名称见项目标题。
+本项目环境依赖非常简单，请在`python3.12`环境中执行`pip install -r requirements.txt`即可。开发者建议加入企鹅群1048307485，猫娘名称见项目标题。
 
 # TODO List（开发计划）
 

@@ -157,7 +157,6 @@ function init_app(){
 
     async function startMicCapture() {  // 开麦，按钮on click
         try {
-            showLive2d();
             if (!audioPlayerContext) {
                 audioPlayerContext = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -239,6 +238,12 @@ function init_app(){
     }
 
     async function startScreenSharing(){ // 分享屏幕，按钮on click
+        // 检查是否在录音状态
+        if (!isRecording) {
+            statusElement.textContent = '请先开启麦克风录音！';
+            return;
+        }
+        
         try {
             // 初始化音频播放上下文
             showLive2d();
@@ -254,12 +259,12 @@ function init_app(){
 
             if (isMobile()) {
               // On mobile we capture the *camera* instead of the screen.
-              // `environment` is the rear camera (iOS + many Androids). If that’s not
+              // `environment` is the rear camera (iOS + many Androids). If that's not
               // available the UA will fall back to any camera it has.
               captureStream = await getMobileCameraStream();
 
             } else {
-              // Desktop/laptop: capture the user’s chosen screen / window / tab.
+              // Desktop/laptop: capture the user's chosen screen / window / tab.
               captureStream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                   cursor: 'always',
@@ -307,7 +312,7 @@ function init_app(){
             let hint = '';
             switch (err.name) {
               case 'NotAllowedError':
-                hint = '请检查 iOS 设置 → Safari → 摄像头 权限是否为“允许”';
+                hint = '请检查 iOS 设置 → Safari → 摄像头 权限是否为"允许"';
                 break;
               case 'NotFoundError':
                 hint = '未检测到摄像头设备';
@@ -340,6 +345,11 @@ function init_app(){
     }
     window.switchScreenSharing = async () => {
         if (stopButton.disabled) {
+            // 检查是否在录音状态
+            if (!isRecording) {
+                statusElement.textContent = '请先开启麦克风录音！';
+                return;
+            }
             await startScreenSharing();
         } else {
             await stopScreenSharing();
@@ -347,7 +357,42 @@ function init_app(){
     }
 
     // 开始麦克风录音
-    micButton.addEventListener('click', startMicCapture);
+    micButton.addEventListener('click', async () => {
+        // 立即禁用所有按钮
+        micButton.disabled = true;
+        muteButton.disabled = true;
+        screenButton.disabled = true;
+        stopButton.disabled = true;
+        resetSessionButton.disabled = true;
+        
+        // 发送start session事件
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                action: 'start_session',
+                input_type: 'audio'
+            }));
+        }
+        
+        statusElement.textContent = '正在初始化麦克风...';
+        
+        // 3秒后执行正常的麦克风启动逻辑
+        setTimeout(async () => {
+            try {
+                // 显示Live2D
+                showLive2d();
+                await startMicCapture();
+            } catch (error) {
+                console.error('启动麦克风失败:', error);
+                // 如果失败，恢复按钮状态
+                micButton.disabled = false;
+                muteButton.disabled = true;
+                screenButton.disabled = true;
+                stopButton.disabled = true;
+                resetSessionButton.disabled = false;
+                statusElement.textContent = '麦克风启动失败';
+            }
+        }, 2500);
+    });
 
     // 开始屏幕共享
     screenButton.addEventListener('click', startScreenSharing);
@@ -377,16 +422,6 @@ function init_app(){
     // 使用AudioWorklet开始音频处理
     async function startAudioWorklet(stream) {
         isRecording = true;
-
-        // 通知服务器开始新的会话
-        if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({
-                action: 'start_session',
-                input_type: 'audio'
-            }));
-        } else {
-            console.error('WebSocket未连接，无法发送开始会话消息');
-        }
 
         // 创建音频上下文
         audioContext = new AudioContext();

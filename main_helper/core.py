@@ -19,8 +19,6 @@ from utils.frontend_utils import contains_chinese, replace_blank, replace_corner
     is_only_punctuation, split_paragraph
 from utils.audio import make_wav_header
 from main_helper.omni_realtime_client import OmniRealtimeClient
-from tn.chinese.normalizer import Normalizer as ZhNormalizer
-from tn.english.normalizer import Normalizer as EnNormalizer
 import inflect
 
 from config import MASTER_NAME, MEMORY_SERVER_PORT, CORE_API_KEY, CORE_URL, CORE_MODEL, USE_TTS
@@ -32,9 +30,6 @@ from librosa import resample
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
-
-zh_tn_model = ZhNormalizer(remove_erhua=False, full_to_half=False, overwrite_cache=False)
-en_tn_model = EnNormalizer()
 
 class SpeechInterrupted(Exception):
     """Raised when a speech output is interrupted."""
@@ -262,7 +257,6 @@ class LLMSessionManager:
         text = text.strip()
         text = text.replace("\n", "")
         if contains_chinese(text):
-            text = zh_tn_model.normalize(text)
             text = replace_blank(text)
             text = replace_corner_mark(text)
             text = text.replace(".", "。")
@@ -271,7 +265,6 @@ class LLMSessionManager:
             text = re.sub(r'[，、]+$', '。', text)
         else:
             text = remove_bracket(text)
-            text = en_tn_model.normalize(text)
             text = spell_out_number(text, self.inflect_parser)
         text = self.emoji_pattern2.sub('', text)
         text = self.emoji_pattern.sub('', text)
