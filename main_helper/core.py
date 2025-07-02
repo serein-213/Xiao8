@@ -13,27 +13,25 @@ import requests
 import logging
 from datetime import datetime
 from websockets import exceptions as web_exceptions
-import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 from utils.frontend_utils import contains_chinese, replace_blank, replace_corner_mark, remove_bracket, spell_out_number, \
     is_only_punctuation, split_paragraph
 from utils.audio import make_wav_header
 from main_helper.omni_realtime_client import OmniRealtimeClient
 import inflect
-
+import base64
+from io import BytesIO
+from PIL import Image
 from config import MASTER_NAME, MEMORY_SERVER_PORT, CORE_API_KEY, CORE_URL, CORE_MODEL, USE_TTS
-# from aiomultiprocess import Pool
-from queue import Queue
+from multiprocessing import Process, Queue as MPQueue
 from uuid import uuid4
 import numpy as np
 from librosa import resample
+import httpx 
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
-class SpeechInterrupted(Exception):
-    """Raised when a speech output is interrupted."""
-    pass
 
 
 # --- 一个带有定期上下文压缩+在线热切换的语音会话管理器 ---
@@ -46,8 +44,9 @@ class LLMSessionManager:
         self.is_active = False
         self.active_session_is_idle = False
         self.current_expression = None
-        self.tts_request_queue = Queue() # TTS request 
-        self.tts_response_queue = Queue() # TTS response
+        self.tts_request_queue = MPQueue() # TTS request (多进程队列)
+        self.tts_response_queue = MPQueue() # TTS response (多进程队列)
+        self.tts_process = None  # TTS子进程
         self.lock = threading.Lock()
         with self.lock:
             self.current_speech_id = None
@@ -75,12 +74,9 @@ class LLMSessionManager:
         self.pending_connector = None
         self.pending_session = None
         self.is_hot_swap_imminent = False
-        self.tts_processing_task = None
-        self.tts_response_task = None
+        self.tts_handler_task = None
         self.use_tts = USE_TTS
         # 将TTS相关的导入移到外部，确保始终可用
-        if self.use_tts:
-            self.reset_tts_client()
         
         # 热切换相关变量
         self.background_preparation_task = None
@@ -96,25 +92,31 @@ class LLMSessionManager:
             voice="Chelsie",
             on_text_delta=self.handle_text_data,
             on_audio_delta=self.handle_audio_data,
+            on_interrupt=self.handle_interrupt,
             on_input_transcript=self.handle_input_transcript,
-            on_output_transcript=self.send_lanlan_response,
+            on_output_transcript=self.handle_output_transcript,
             on_connection_error=self.handle_connection_error,
             on_response_done=self.handle_response_complete
         )
 
-    async def handle_text_data(self, text: str):
+    async def handle_interrupt(self):
+        if self.use_tts:
+            self.tts_request_queue.put((None, None))
+        await self.send_user_activity()
+
+    async def handle_text_data(self, text: str, is_first_chunk: bool = False):
         """Qwen文本回调：可用于前端显示、语音合成"""
         if self.use_tts:
-            self.tts_request_queue.put(text)
+            self.tts_request_queue.put((self.current_speech_id, text))
+            await self.send_lanlan_response(text, is_first_chunk)
         else:
             logger.info(f"\nAssistant: {text}")
 
     async def handle_response_complete(self):
         """Qwen完成回调：用于处理Core API的响应完成事件，包含TTS和热切换逻辑"""
         if self.use_tts:
-            self.tts_request_queue.put(None)
-            # with self.lock:
-            #     self.current_speech_id = None
+            print("Response complete")
+            self.tts_request_queue.put((None, None))
         self.sync_message_queue.put({'type': 'system', 'data': 'turn end'})
         
         # 如果正在热切换过程中，跳过所有热切换逻辑
@@ -123,7 +125,7 @@ class LLMSessionManager:
             
         if hasattr(self, 'is_preparing_new_session') and not self.is_preparing_new_session:
             if self.session_start_time and \
-                        (datetime.now() - self.session_start_time).total_seconds() >= 20:
+                        (datetime.now() - self.session_start_time).total_seconds() >= 40:
                 logger.info("Main Listener: Uptime threshold met. Marking for new session preparation.")
                 self.is_preparing_new_session = True  # Mark that we are in prep mode
                 self.summary_triggered_time = datetime.now()
@@ -190,7 +192,13 @@ class LLMSessionManager:
             elif self.message_cache_for_new_session[-1]['role'] == MASTER_NAME:
                 self.message_cache_for_new_session[-1]['text'] += transcript.strip()
         # 可选：推送用户活动
-        await self.send_user_activity()
+        with self.lock:
+            self.current_speech_id = str(uuid4())
+
+    async def handle_output_transcript(self, text: str, is_first_chunk: bool = False):
+        if self.use_tts:
+            self.tts_request_queue.put((self.current_speech_id, text))
+        await self.send_lanlan_response(text, is_first_chunk)
 
     async def send_lanlan_response(self, text: str, is_first_chunk: bool = False):
         """Qwen输出转录回调：可用于前端显示/缓存/同步。"""
@@ -279,12 +287,17 @@ class LLMSessionManager:
 
         # new session时重置部分状态
         if self.use_tts:
-            if self.tts_processing_task and not self.tts_processing_task.done():
-                self.tts_processing_task.cancel()
-            if self.tts_response_task and not self.tts_response_task.done():
-                self.tts_response_task.cancel()
-            self.tts_processing_task = asyncio.create_task(self.speech_synthesis())
-            self.tts_response_task = asyncio.create_task(self.tts_response_handler())
+            # 启动TTS子进程
+            if self.tts_process is None or not self.tts_process.is_alive():
+                from config import AUDIO_API_KEY, VOICE_ID
+                self.tts_process = Process(
+                    target=speech_synthesis_worker,
+                    args=(self.tts_request_queue, self.tts_response_queue, AUDIO_API_KEY, VOICE_ID)
+                )
+                self.tts_process.daemon = True
+                self.tts_process.start()
+            if self.tts_handler_task is None or not self.tts_handler_task.done():
+                self.tts_handler_task = asyncio.create_task(self.tts_response_handler())
 
         if new:
             self.message_cache_for_new_session = []
@@ -324,8 +337,6 @@ class LLMSessionManager:
 
     async def send_user_activity(self):
         try:
-            with self.lock:
-                self.current_speech_id = None
             if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
                 message = {
                     "type": "user_activity"
@@ -345,16 +356,6 @@ class LLMSessionManager:
 
     async def _background_prepare_pending_session(self):
         """[热切换相关] 后台预热pending session"""
-        try:
-            initial_prompt_summary = requests.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}").text
-        except requests.RequestException as e:
-            logger.error(f"💥 BG Prep Stage 1: Failed to get summary: {e}. Aborting.")
-
-            # No need to set event here, the trigger logic in main listener won't proceed.
-            # Ensure _reset_preparation_state (or parts of it) is called if appropriate to allow retries
-            if self.is_preparing_new_session:  # If still in general prep mode
-                self.background_preparation_task = None  # Allow it to be re-triggered by main listener
-            return
 
         # 2. Create PENDING session components (as before, store in self.pending_connector, self.pending_session)
         try:
@@ -366,30 +367,25 @@ class LLMSessionManager:
                 voice="Chelsie",
                 on_text_delta=self.handle_text_data,
                 on_audio_delta=self.handle_audio_data,
+                on_interrupt=self.handle_interrupt,
                 on_input_transcript=self.handle_input_transcript,
-                on_output_transcript=self.send_lanlan_response,
+                on_output_transcript=self.handle_output_transcript,
                 on_connection_error=self.handle_connection_error,
                 on_response_done=self.handle_response_complete
             )
             
-            await self.pending_session.connect(initial_prompt_summary, native_audio = not self.use_tts)
-
-            # 3. Send initial context (summary + system time + initial_cache_snapshot)
-            initial_context = f"SYSTEM_MESSAGE | " + initial_prompt_summary + self._convert_cache_to_str(self.message_cache_for_new_session)
+            initial_prompt = self.lanlan_prompt
             self.initial_cache_snapshot_len = len(self.message_cache_for_new_session)
-            await self.pending_session.create_response(initial_context)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}")
+                initial_prompt += resp.text + self._convert_cache_to_str(self.message_cache_for_new_session)
+            # print(initial_prompt)
+            await self.pending_session.connect(initial_prompt, native_audio = not self.use_tts)
 
             # 4. Start temporary listener for PENDING session's *first* ignored response
             #    and wait for it to complete.
             if self.pending_session_warmed_up_event:
-                asyncio.create_task(self._listen_for_pending_session_response(self.pending_session_warmed_up_event, self.pending_session, "first_warmup"))
-                await self.pending_session_warmed_up_event.wait()  # Wait for the event to be set by the temporary listener
-
-                if not self.pending_session_warmed_up_event.is_set():  # Should not happen if await returned, but as a guard
-                    logger.error("💥 BG Prep Stage 1: Warmed up event was not set as expected. Aborting further prep.")
-                    await self._cleanup_pending_session_resources()  # Clean up pending session
-                    self.background_preparation_task = None
-                    return
+                self.pending_session_warmed_up_event.set() 
 
         except asyncio.CancelledError:
             logger.error("💥 BG Prep Stage 1: Task cancelled.")
@@ -404,56 +400,6 @@ class LLMSessionManager:
             # Ensure this task variable is cleared so it's known to be done
             if self.background_preparation_task and self.background_preparation_task.done():
                 self.background_preparation_task = None
-
-    async def _listen_for_pending_session_response(self, event_to_set: asyncio.Event,
-                                                   session_to_monitor, purpose: str):
-        """[热切换相关] 监听pending session的响应"""
-        if not session_to_monitor:
-            logger.error(f"💥 Pending Listener ({purpose}): No session to monitor.")
-            if event_to_set and not event_to_set.is_set(): 
-                event_to_set.set()  # Unblock, but it's an error state
-            return
-
-        logger.info(f"Pending Listener ({purpose}): Waiting for response from session (to be ignored).")
-        try:
-            # 检查session是否有有效的websocket连接
-            if not hasattr(session_to_monitor, 'ws') or not session_to_monitor.ws:
-                logger.error(f"💥 Pending Listener ({purpose}): Session websocket not available.")
-                if event_to_set: 
-                    event_to_set.set()
-                return
-            
-            # 启动pending session的消息处理
-            if hasattr(session_to_monitor, 'handle_messages'):
-                message_task = asyncio.create_task(session_to_monitor.handle_messages())
-            
-            # 等待响应完成（这里需要根据实际的响应完成事件来调整）
-            # 由于Qwen的响应完成机制可能不同，这里简化处理
-            await asyncio.sleep(2)  # 等待足够时间让响应完成
-            
-            # 取消消息处理任务
-            if 'message_task' in locals() and not message_task.done():
-                message_task.cancel()
-                try:
-                    await asyncio.wait_for(message_task, timeout=1.0)
-                except asyncio.TimeoutError:
-                    logger.error(f"Pending Listener ({purpose}): Message task cancellation timeout.")
-                except asyncio.CancelledError:
-                    pass
-            
-            logger.info(f"Pending Listener ({purpose}): Response complete and ignored.")
-            if event_to_set: 
-                event_to_set.set()
-            
-        except asyncio.CancelledError:
-            logger.info(f"Pending Listener ({purpose}): Task cancelled.")
-            # On cancellation, do not set the event. The caller should handle its own cancellation.
-        except Exception as e:
-            logger.error(f"💥 Pending Listener ({purpose}): Error: {e}")
-            if event_to_set and not event_to_set.is_set(): 
-                event_to_set.set()  # Unblock on error
-        finally:
-            logger.info(f"Pending Listener ({purpose}): Finished.")
 
     async def _perform_final_swap_sequence(self):
         """[热切换相关] 执行最终的swap序列"""
@@ -475,24 +421,11 @@ class LLMSessionManager:
                 final_prime_text = f"SYSTEM_MESSAGE | 系统自动报时，当前时间： " + str(
                                                     datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-            await self.pending_session.create_response(final_prime_text)
+            await self.pending_session.create_response(final_prime_text, skipped=True)
 
             # 2. Start temporary listener for PENDING session's *second* ignored response
             if self.pending_session_final_prime_complete_event:
-                asyncio.create_task(
-                    self._listen_for_pending_session_response(self.pending_session_final_prime_complete_event, self.pending_session,
-                                                              "final_prime")
-                )
-                await self.pending_session_final_prime_complete_event.wait()  # Wait for this second ignored response
-
-                if not self.pending_session_final_prime_complete_event.is_set():  # Should not happen if await returned
-                    logger.error("💥 Final Swap Sequence: Final prime complete event not set. Aborting.")
-                    # Don't proceed with swap if this stage failed.
-                    # Pending session might be in an odd state. Consider cleanup.
-                    await self._cleanup_pending_session_resources()
-                    self._reset_preparation_state(clear_main_cache=False)  # Keep cache for retry
-                    self.is_hot_swap_imminent = False
-                    return
+                self.pending_session_final_prime_complete_event.is_set()
 
             # --- PERFORM ACTUAL HOT SWAP ---
             logger.info("Final Swap Sequence: Starting actual session swap...")
@@ -584,7 +517,7 @@ class LLMSessionManager:
 
     async def disconnected_by_server(self):
         await self.send_status(f"{self.lanlan_name}失联了，请重启！")
-        await self.sync_message_queue.put({'type': 'system', 'data': 'API server disconnected'})
+        self.sync_message_queue.put({'type': 'system', 'data': 'API server disconnected'})
         await self.cleanup()
 
     async def stream_data(self, message: dict):  # 向Core API发送Media数据
@@ -619,14 +552,26 @@ class LLMSessionManager:
                     return
                 except Exception as e:
                     logger.error(f"💥 Stream: Error processing audio data: {e}")
-                    import traceback
                     traceback.print_exc()
                     return
 
             elif input_type in ['screen', 'camera']:
                 try:
                     if isinstance(data, str) and data.startswith('data:image/jpeg;base64,'):
-                        await self.session.stream_image(data)
+                        img_data = data.split(',')[1]
+                        img_bytes = base64.b64decode(img_data)
+                        # Resize to 480p (height=480, keep aspect ratio)
+                        image = Image.open(BytesIO(img_bytes))
+                        w, h = image.size
+                        new_h = 480
+                        new_w = int(w * (new_h / h))
+                        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                        buffer = BytesIO()
+                        image.save(buffer, format='JPEG')
+                        buffer.seek(0)
+                        resized_bytes = buffer.read()
+                        resized_b64 = base64.b64encode(resized_bytes).decode('utf-8')
+                        await self.session.stream_image(resized_b64)
                     else:
                         logger.error(f"💥 Stream: Invalid screen data format.")
                         return
@@ -676,13 +621,15 @@ class LLMSessionManager:
             except Exception as e:
                 logger.error(f"💥 End Session: Error during cleanup: {e}")
                 traceback.print_exc()
-        
-        if self.use_tts and self.tts_processing_task and not self.tts_processing_task.done():
-            self.tts_processing_task.cancel()
-            self.tts_processing_task = None
-        if self.use_tts and self.tts_response_task and not self.tts_response_task.done():
-            self.tts_response_task.cancel()
-            self.tts_response_task = None
+        # 关闭TTS子进程
+        if self.use_tts and self.tts_process and self.tts_process.is_alive():
+            self.tts_request_queue.put((None, None))  # 通知子进程退出
+            self.tts_process.terminate()
+            self.tts_process.join()
+            self.tts_process = None
+        if self.use_tts and self.tts_handler_task and not self.tts_handler_task.done():
+            self.tts_handler_task.cancel()
+            self.tts_handler_task = None
 
         self.last_time = None
         await self.send_expressions()
@@ -761,130 +708,83 @@ class LLMSessionManager:
         except Exception as e:
             logger.error(f"💥 WS Send Response Error: {e}")
 
-    def reset_tts_client(self):
-        try:
-            import dashscope
-            from dashscope.audio.tts_v2 import ResultCallback, SpeechSynthesizer, AudioFormat
-            from config import AUDIO_API_KEY, VOICE_ID
-            
-            dashscope.api_key = AUDIO_API_KEY
-            self.VOICE_ID = VOICE_ID
-            response_queue = self.tts_response_queue
-
-            class Callback(ResultCallback):
-                def on_open(self): pass
-                def on_complete(self): pass
-                def on_error(self, message: str): logger.error(f"💥 TTS Error: {message}")
-                def on_close(self): pass
-                def on_event(self, message): pass
-                def on_data(self, data: bytes) -> None:
-                    audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                    data = (resample(audio, orig_sr=24000, target_sr=48000)*32767.).clip(-32767, 32766).astype(np.int16).tobytes()
-                    response_queue.put(data)
-
-            self.tts_callback = Callback()
-            
-            self.synthesizer = SpeechSynthesizer(
-                model="cosyvoice-v2",
-                voice=self.VOICE_ID,
-                speech_rate=1.1,
-                format=AudioFormat.PCM_24000HZ_MONO_16BIT,  
-                callback=self.tts_callback,
-            )
-        except Exception as e:
-            logger.error(f"💥 Error initializing TTS: {e}")
-            self.use_tts = False
-
     async def tts_response_handler(self):
         while True:
             while not self.tts_response_queue.empty():
                 data = self.tts_response_queue.get_nowait()
                 await self.send_speech(data)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
-    async def speech_synthesis(self):
-        async def gen_request(tts_text):
-            with self.lock:
-                speech_id = self.current_speech_id = str(uuid4())
-            is_first_chunk = True
+# TTS多进程worker函数，供主进程Process(target=...)调用
 
-            while True:
-                await asyncio.sleep(0.1)
-                if self.current_speech_id is None or speech_id != self.current_speech_id:
-                    raise SpeechInterrupted()
-                if not self.tts_request_queue.empty():
-                    received_text = self.tts_request_queue.get_nowait()
-                    if received_text is None:
-                        if tts_text:
-                            emo = self.emotion_pattern.search(tts_text)
-                            tts_text = self.normalize_text(tts_text)
-                            # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], 'Chunk sent.')
-                            await self.send_lanlan_response(tts_text, is_first_chunk)
-                            yield tts_text
-                            is_first_chunk = False
-                            if emo:
-                                await self.send_expressions()
-                                # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], emo[1])
-                                await self.send_expressions(emo[1])
-                        break
-                    else:
-                        tts_text += received_text
-                        if '<' in received_text and '>' not in received_text:
-                            continue
+def speech_synthesis_worker(request_queue, response_queue, AUDIO_API_KEY, VOICE_ID):
+    import dashscope
+    from dashscope.audio.tts_v2 import ResultCallback, SpeechSynthesizer, AudioFormat
+    import numpy as np
+    from librosa import resample
+    import re
+    import time
+    dashscope.api_key = AUDIO_API_KEY
+    class Callback(ResultCallback):
+        def __init__(self, response_queue):
+            self.response_queue = response_queue
+        def on_open(self): pass
+        def on_complete(self): pass
+        def on_error(self, message: str): print(f"TTS Error: {message}")
+        def on_close(self): pass
+        def on_event(self, message): pass
+        def on_data(self, data: bytes) -> None:
+            audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            data = (resample(audio, orig_sr=24000, target_sr=48000)*32767.).clip(-32767, 32766).astype(np.int16).tobytes()
+            self.response_queue.put(data)
+    callback = Callback(response_queue)
+    current_speech_id = None
+    synthesizer = None
+    while True:
+        # 非阻塞检查队列，优先处理打断
+        if request_queue.empty():
+            time.sleep(0.01)
+            continue
 
-                        emo = self.emotion_pattern.search(tts_text)
-                        tts_text = self.normalize_text(tts_text)
-                        if len(tts_text) > 0:
-                            exec_text, tts_text = split_paragraph(tts_text, force_process=False)
-                            if exec_text:
-                                # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], 'Chunk sent.')
-                                await self.send_lanlan_response(exec_text, is_first_chunk)
-                                yield exec_text
-                                is_first_chunk = False
-                        if emo:
-                            await self.send_expressions()
-                            # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], emo[1])
-                            await self.send_expressions(emo[1])
-        
-        while True:
+        sid, tts_text = request_queue.get()
+        if sid is None and synthesizer is not None:
+            # 合成完毕
             try:
-                # print(self.audio_queue.qsize())
-                if self.tts_request_queue.empty():
-                    await asyncio.sleep(0.1)
-                    continue
-                else:
-                    first = self.tts_request_queue.get_nowait()
-                    if first is None:
-                        await asyncio.sleep(0.1)
-                        continue
-
-                emo = self.emotion_pattern.search(first)
-                if emo:
-                    first = self.emotion_pattern.sub('', first)
-                    await self.send_expressions()
-                    await self.send_expressions(emo[1])
-
-                # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], 'Before TTS call.')
-                async for text in gen_request(first):
-                    # print(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], 'TTS call.')
-                    self.synthesizer.streaming_call(text)
-                self.synthesizer.streaming_complete()
-                self.reset_tts_client()
-                logger.info(datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], 'Speech finished.')
-
-            except SpeechInterrupted:
-                logger.error('💥 Speech interrupted.')
-                self.synthesizer.streaming_complete()
-                self.reset_tts_client()
-            except asyncio.CancelledError as e:
-                logger.error("💥 Speech task cancelled.")
-                break
-            except websockets.exceptions.ConnectionClosed:
-                logger.error('💥 Speech websocket closed.')
-                self.reset_tts_client()
+                current_speech_id = None
+                synthesizer.streaming_complete()
+            except Exception:
+                synthesizer = None
+            continue
+        if current_speech_id is None or current_speech_id != sid or synthesizer is None:
+            current_speech_id = sid
+            try:
+                if synthesizer is not None:
+                    try:
+                        synthesizer.streaming_complete()
+                        synthesizer.close()
+                    except Exception:
+                        pass
+                synthesizer = SpeechSynthesizer(
+                    model="cosyvoice-v2",
+                    voice=VOICE_ID,
+                    speech_rate=1.1,
+                    format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+                    callback=callback,
+                )
             except Exception as e:
-                logger.error(f"💥 Speech processing failed: {e}")
-                import traceback
-                traceback.print_exc()
-                self.reset_tts_client()
+                print("TTS Error: ", e)
+                synthesizer = None
+                current_speech_id = None
+                continue
+        if not tts_text:
+            time.sleep(0.01)
+            continue
+        # 处理表情等逻辑
+        try:
+            synthesizer.streaming_call(tts_text)
+        except Exception as e:
+            print("TTS Error: ", e)
+            synthesizer = None
+            current_speech_id = None
+            continue
 

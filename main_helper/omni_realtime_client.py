@@ -35,7 +35,7 @@ class OmniRealtimeClient:
             The voice to use for audio output.
         turn_detection_mode (TurnDetectionMode):
             The mode for turn detection.
-        on_text_delta (Callable[[str], Awaitable[None]]):
+        on_text_delta (Callable[[str, bool], Awaitable[None]]):
             Callback for text delta events.
             Takes in a string and returns an awaitable.
         on_audio_delta (Callable[[bytes], Awaitable[None]]):
@@ -46,7 +46,7 @@ class OmniRealtimeClient:
             Takes in a string and returns an awaitable.
         on_interrupt (Callable[[], Awaitable[None]]):
             Callback for user interrupt events, should be used to stop audio playback.
-        on_output_transcript (Callable[[str], Awaitable[None]]):
+        on_output_transcript (Callable[[str, bool], Awaitable[None]]):
             Callback for output transcript events.
             Takes in a string and returns an awaitable.
         extra_event_handlers (Dict[str, Callable[[Dict[str, Any]], Awaitable[None]]]):
@@ -60,11 +60,11 @@ class OmniRealtimeClient:
         model: str = "",
         voice: str = "Chelsie",
         turn_detection_mode: TurnDetectionMode = TurnDetectionMode.SERVER_VAD,
-        on_text_delta: Optional[Callable[[str], Awaitable[None]]] = None,
+        on_text_delta: Optional[Callable[[str, bool], Awaitable[None]]] = None,
         on_audio_delta: Optional[Callable[[bytes], Awaitable[None]]] = None,
         on_interrupt: Optional[Callable[[], Awaitable[None]]] = None,
         on_input_transcript: Optional[Callable[[str], Awaitable[None]]] = None,
-        on_output_transcript: Optional[Callable[[str], Awaitable[None]]] = None,
+        on_output_transcript: Optional[Callable[[str, bool], Awaitable[None]]] = None,
         on_connection_error: Optional[Callable[[], Awaitable[None]]] = None,
         on_response_done: Optional[Callable[[], Awaitable[None]]] = None,
         extra_event_handlers: Optional[Dict[str, Callable[[Dict[str, Any]], Awaitable[None]]]] = None
@@ -92,7 +92,9 @@ class OmniRealtimeClient:
         self._is_first_chunk = False
         self._print_input_transcript = False
         self._output_transcript_buffer = ""
-        self.native_audio = ["text", "audio"]
+        self._modalities = ["text", "audio"]
+        self._audio_in_buffer = False
+        self._skip_until_next_response = False
 
     async def connect(self, instructions: str, native_audio=True) -> None:
         """Establish WebSocket connection with the Realtime API."""
@@ -108,32 +110,22 @@ class OmniRealtimeClient:
         # Set up default session configuration
         if self.turn_detection_mode == TurnDetectionMode.MANUAL:
             raise NotImplementedError("Manual turn detection is not supported")
-            # await self.update_session({
-            #     "modalities": ["text", "audio"],
-            #     "voice": self.voice,
-            #     "input_audio_format": "pcm16",
-            #     "output_audio_format": "pcm16",
-            #     "input_audio_transcription": {
-            #         "model": "gummy-realtime-v1"
-            #     },
-            #     "turn_detection" : None
-            # })
         elif self.turn_detection_mode == TurnDetectionMode.SERVER_VAD:
-            self.native_audio = ["text", "audio"] if native_audio else ["text"]
+            self._modalities = ["text", "audio"] if native_audio else ["text"]
             await self.update_session({
                 "instructions": instructions,
-                "modalities": self.native_audio ,
+                "modalities": self._modalities ,
                 "voice": self.voice if "qwen" in self.model else "sage",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
-                    "model": "gummy-realtime-v1" if "qwen" in self.model else "whisper-1"
+                    "model": "gummy-realtime-v1" if "qwen" in self.model else "gpt-4o-mini-transcribe"
                 },
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.4,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 200
+                    "threshold": 0.5,
+                    "prefix_padding_ms":300,
+                    "silence_duration_ms": 500
                 },
                 "temperature": 0.3 if "qwen" in self.model else 0.7,
                 "speed": 1. # OpenAI Only
@@ -167,19 +159,22 @@ class OmniRealtimeClient:
 
     async def stream_image(self, image_b64: str) -> None:
         """Stream raw image data to the API."""
-        append_event = {
-            "type": "input_image_buffer.append",
-            "image": image_b64
-        }
-        await self.send_event(append_event)
+        if self._audio_in_buffer:
+            append_event = {
+                "type": "input_image_buffer.append",
+                "image": image_b64
+            }
+            await self.send_event(append_event)
 
-    async def create_response(self, instructions: str) -> None:
+    async def create_response(self, instructions: str, skipped: bool = False) -> None:
         """Request a response from the API. Needed when using manual mode."""
+        if skipped == True:
+            self._skip_until_next_response = True
         event = {
             "type": "response.create",
             "response": {
                 "instructions": instructions,
-                "modalities": self.native_audio
+                "modalities": self._modalities
             }
         }
         logger.info(f"Creating response: {event}")
@@ -221,63 +216,71 @@ class OmniRealtimeClient:
                 #     logger.debug(f"Received event: {event}")
                 # else:
                 #     logger.debug(f"Event type: {event_type}")
-
                 if event_type == "error":
                     logger.error(f"API Error: {event['error']}")
                     continue
+                elif event_type == "response.done":
+                    self._is_responding = False
+                    self._current_response_id = None
+                    self._current_item_id = None
+                    self._skip_until_next_response = False
+                    if self.on_response_done:
+                        await self.on_response_done()
                 elif event_type == "response.created":
                     self._current_response_id = event.get("response", {}).get("id")
                     self._is_responding = True
                     self._is_first_chunk = True
                 elif event_type == "response.output_item.added":
                     self._current_item_id = event.get("item", {}).get("id")
-                elif event_type == "response.done":
-                    self._is_responding = False
-                    self._current_response_id = None
-                    self._current_item_id = None
-                    if self.on_response_done:
-                        await self.on_response_done()
                 # Handle interruptions
                 elif event_type == "input_audio_buffer.speech_started":
                     logger.info("Speech detected")
+                    self._audio_in_buffer = True
                     if self._is_responding:
                         logger.info("Handling interruption")
                         await self.handle_interruption()
                     if self.on_interrupt:
-                        logger.info("Handling on_interrupt, stop playback")
+                        # logger.info("Handling on_interrupt, stop playback")
                         await self.on_interrupt()
                 elif event_type == "input_audio_buffer.speech_stopped":
                     logger.info("Speech ended")
-                # Handle normal response events
-                elif event_type == "response.text.delta":
-                    if self.on_text_delta:
-                        await self.on_text_delta(event["delta"])
-                elif event_type == "response.audio.delta":
-                    if self.on_audio_delta:
-                        audio_bytes = base64.b64decode(event["delta"])
-                        await self.on_audio_delta(audio_bytes)
+                    self._audio_in_buffer = False
                 elif event_type == "conversation.item.input_audio_transcription.completed":
-                    transcript = event.get("transcript", "")
-                    if self.on_input_transcript:
-                        await self.on_input_transcript(transcript)
-                        self._print_input_transcript = True
-                elif event_type == "response.audio_transcript.delta":
-                    if self.on_output_transcript:
-                        delta = event.get("delta", "")
-                        if not self._print_input_transcript:
-                            self._output_transcript_buffer += delta
-                        else:
-                            # if self._output_transcript_buffer:
-                            #     logger.info(f"{self._output_transcript_buffer} is_first_chunk: True")
-                            #     await self.on_output_transcript(self._output_transcript_buffer, self._is_first_chunk)
-                            #     self._is_first_chunk = False
-                            #     self._output_transcript_buffer = ""
-                            await self.on_output_transcript(delta)
-                            self._is_first_chunk = False
+                    self._print_input_transcript = True
                 elif event_type == "response.audio_transcript.done":
                     self._print_input_transcript = False
-                elif event_type in self.extra_event_handlers:
-                    await self.extra_event_handlers[event_type](event)
+
+                if not self._skip_until_next_response:
+                    if event_type == "response.text.delta":
+                        if self.on_text_delta:
+                            await self.on_text_delta(event["delta"], self._is_first_chunk)
+                            self._is_first_chunk = False
+                    elif event_type == "response.audio.delta":
+                        if self.on_audio_delta:
+                            audio_bytes = base64.b64decode(event["delta"])
+                            await self.on_audio_delta(audio_bytes)
+                    elif event_type == "conversation.item.input_audio_transcription.completed":
+                        transcript = event.get("transcript", "")
+                        if self.on_input_transcript:
+                            await self.on_input_transcript(transcript)
+                    elif event_type == "response.audio_transcript.done":
+                        self._print_input_transcript = False
+                    elif event_type == "response.audio_transcript.delta":
+                        if self.on_output_transcript:
+                            delta = event.get("delta", "")
+                            if not self._print_input_transcript:
+                                self._output_transcript_buffer += delta
+                            else:
+                                if self._output_transcript_buffer:
+                                    # logger.info(f"{self._output_transcript_buffer} is_first_chunk: True")
+                                    await self.on_output_transcript(self._output_transcript_buffer, self._is_first_chunk)
+                                    self._is_first_chunk = False
+                                    self._output_transcript_buffer = ""
+                                await self.on_output_transcript(delta, self._is_first_chunk)
+                                self._is_first_chunk = False
+                    
+                    elif event_type in self.extra_event_handlers:
+                        await self.extra_event_handlers[event_type](event)
 
         except websockets.exceptions.ConnectionClosedOK:
             logger.info("Connection closed as expected")
