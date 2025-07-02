@@ -4,12 +4,15 @@ core_config.txt
 # 忽略日志文件
 *.log
 
-# 忽略内存文件
-D:\Project\Xiao8\memory\store\
+# 忽略 memory/store 下所有内容（含子目录和文件）
+memory/store/
 
 # 忽略临时文件
 *.tmp
 
-# 忽略python缓存文件
-**/__pycache__/
+# 忽略 Python 缓存文件和字节码
+__pycache__/
 *.py[cod]
+
+# 忽略 Jupyter Notebook 检查点
+.ipynb_checkpoints/
