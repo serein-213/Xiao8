@@ -2,7 +2,8 @@
 
 ![小八Logo](assets/xiaoba_logo.jpg)
 
-# Project <s>小八</s> Lanlan - 语音原生的全场景AI伙伴
+[English Version](README_en.md)
+# <s>小八</s> Lanlan :kissing_cat: <br>一个语音原生的全场景AI伙伴
 
 **新手友好、开箱即用，无需显卡的全场景AI <small><s>猫娘</s></small> 伙伴**
 
@@ -36,13 +37,14 @@
 
 # 运行
 
-1. **获取阿里云API**。在阿里云的百炼平台[官网](https://bailian.console.aliyun.com/)注册账号。新用户实名认证后可以获取大量免费额度，记得留意页面上的"新人福利"广告。注册完成后，请访问[控制台](https://bailian.console.aliyun.com/api-key?tab=model#/api-key)获取API Key。将API Key填入`core_config.txt`中的`"coreApiKey": `后的引号内。     > *注：本项目提供的都是官方链接，不含任何推广，本人无法从中获取任何收益。阿里的官网目前做的很烂，请忍耐orz*
+1. **获取阿里云API**。在阿里云的百炼平台[官网](https://bailian.console.aliyun.com/)注册账号。新用户实名认证后可以获取大量免费额度，记得留意页面上的"新人福利"广告。注册完成后，请访问[控制台](https://bailian.console.aliyun.com/api-key?tab=model#/api-key)获取API Key。将API Key填入`core_config.txt`中的`"coreApiKey": `后的引号内。     
+> *注：本项目提供的都是官方链接，不含任何推广，本人无法从中获取任何收益。阿里的官网目前做的很烂，请忍耐orz*
 
 1. **体验网页版**。对于一键包，填写好API KEY后，运行`启动网页版.bat`即可打开网页版。**首次启动请耐心等待网页刷新**。
 
-1. **体验桌宠模式**。如果网页版可以正常使用，可以考虑继续通过`启动App版.bat`实现桌面穿透。注意，**请不要同时使用网页版和App版。请确认exe文件没有被系统或杀毒软件隔离。** *但是不要直接运行exe文件。直接运行exe文件会触发小八病毒模式，只能通过任务管理器手动清除进程...*
+1. **体验桌宠模式**。如果网页版可以正常使用，可以考虑继续通过`启动App版.bat`实现桌面穿透。注意，**请不要同时使用网页版和App版。请确认exe文件没有被系统或杀毒软件隔离。** *使用结束后请在桌面右下角找到小八图标，右键退出。*
 
-*对于开发者，请在克隆本项目后，(1)新建pyhon3.12环境。(2)执行`pip install -r requirements.txt`安装依赖。(3)复制`config/api_template.py`到`config/api.py`并进行必要配置。(4)执行`python memory_server.py`和`python main_server.py`。(5)通过main server中指定的端口（默认为localhost:48911）访问网页版。*
+>  *对于开发者，请在克隆本项目后，(1)新建pyhon3.12环境。(2)执行`pip install -r requirements.txt`安装依赖。(3)复制`config/api_template.py`到`config/api.py`并进行必要配置。(4)执行`python memory_server.py`和`python main_server.py`。(5)通过main server中指定的端口（默认为`localhost:48911`）访问网页版。*
 
 # 进阶内容
 
