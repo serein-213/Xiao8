@@ -2,7 +2,7 @@
 
 ![小八Logo](assets/xiaoba_logo.jpg)
 
-[English Version](README_en.md)
+[English Version](docs/README_en.md)
 # <s>小八</s> Lanlan :kissing_cat: <br>一个语音原生的全场景AI伙伴
 
 **新手友好、开箱即用，无需显卡的全场景AI <small><s>猫娘</s></small> 伙伴**
@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)]()
 
-**我奶奶都能在3分钟内配置好的赛博猫娘！**
+**:older_woman: 我奶奶都能在3分钟内配置好的赛博猫娘！**
 
 *替我向兰兰Say Hello*
 
