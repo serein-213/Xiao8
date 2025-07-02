@@ -2,9 +2,9 @@
 
 ![小八Logo](assets/xiaoba_logo.jpg)
 
-# Project ~~Chat酱~~ ~~Lanlan~~ ~~小八~~ 兰兰
+# Project <small><s>Chat酱</s> <s>兰兰</s> <s>小八</s></small> Lanlan
 
-**新手友好、开箱即用，无需显卡的全场景AI ~~猫娘~~ 伙伴**
+**新手友好、开箱即用，无需显卡的全场景AI <small><s>猫娘</s></small> 伙伴**
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -38,11 +38,11 @@
 
 1. **获取阿里云API**。在阿里云的百炼平台[官网](https://bailian.console.aliyun.com/)注册账号。新用户实名认证后可以获取大量免费额度，记得留意页面上的"新人福利"广告。注册完成后，请访问[控制台](https://bailian.console.aliyun.com/api-key?tab=model#/api-key)获取API Key。将API Key填入`core_config.txt`中的`"coreApiKey": `后的引号内。     > *注：本项目提供的都是官方链接，不含任何推广，本人无法从中获取任何收益。阿里的官网目前做的很烂，请忍耐orz*
 
-1. 对于一键包，填写好API KEY后，运行`启动网页版.bat`即可打开网页版。**首次启动请耐心等待网页刷新**。如果网页版可以正常使用，可以考虑继续试用Electron客户端（即exe文件版）实现桌面穿透。注意，**请不要同时使用网页版和客户端版本。如果使用客户端版，请确认exe文件没有被系统或杀毒软件隔离，然后，通过`启动App版.bat`启动。不要直接运行exe文件。**
+1. **体验网页版**。对于一键包，填写好API KEY后，运行`启动网页版.bat`即可打开网页版。**首次启动请耐心等待网页刷新**。
 
-**注意：点击"开始聊天"后，请耐心等待3秒，否则首句对话会出现延迟（或者被吞掉）。**
+1. **体验桌宠模式**。如果网页版可以正常使用，可以考虑继续通过`启动App版.bat`实现桌面穿透。注意，**请不要同时使用网页版和App版。请确认exe文件没有被系统或杀毒软件隔离。** *但是不要直接运行exe文件。直接运行exe文件会触发小八病毒模式，只能通过任务管理器手动清除进程...*
 
-*对于开发者，请在新建conda环境后，执行`pip install -r requirements.txt`安装依赖。然后执行`python memory_server.py`和`python main_server.py`。最后通过main server中指定的端口访问网页版。*
+*对于开发者，请在新建pyhon3.12的conda环境后，执行`pip install -r requirements.txt`安装依赖。然后执行`python memory_server.py`和`python main_server.py`。最后通过main server中指定的端口（默认为localhost:48911）访问网页版。*
 
 # 进阶内容
 
@@ -102,10 +102,6 @@ Live2D模型的路径参数目前硬编码在了`main_server.py`里的`"model_pa
 
 对不起，但是它说话快。
 
-> *为什么我的模型说话时断断续续的？*
-
-语音流由远端服务器生成，受**网络波动**影响。本项目无法解决由网络波动引起的任何问题。
-
 > *为什么我的AI感觉笨笨的？*
 
 本项目无法对AI的**智能水平**负责，只能帮助您选择当前综合性能最优的解决方案。如果您已经看过本项目在Bilibili的视频，那么直播版与开源版代码逻辑一致，只有支持的API接口不一致。有条件者可以将`config/api.py`中的`CORE_URL`/`CORE_API_KEY`/`CORE_MODEL`替换成OpenAI的`GPT-4o`版本，即可将模型从Qwen升级为`GPT-4o`。也可以**等待阿里或其他国内厂家的升级与跟进**。
@@ -123,10 +119,6 @@ OpenAI官方的Realtime API支持`tool calling`功能，因此，本项目与MCP
 > *本项目支持哪些语言模型？*
 
 本项目依赖于实时全模态API。直播版本使用的是Gemini Live API，开源版本使用的是[OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime)。Gemini Live具有更好的效果，但目前**只支持谷歌**。OpenAI Realtime目前**有OpenAI和阿里云两家服务商**支持，未来可能兼容更多模型。开源版只支持`Qwen-Omni-Realtime`和`GPT-4o-Realtime`两个模型。
-
-> *当前版本是否支持屏幕分享？*
-
-本项目支持，但**API目前不支持**。本项目依赖于实时全模态API，理论上可以支持屏幕分享（基于Gemini的版本已进行过测试）。但是，OpenAI的Realtime API暂时**不支持视频输入**。阿里云接口的官方文档中则存在矛盾之处（客户端有"添加*图片*到缓冲区"的事件，服务器端只有"服务器收到提交的*音频*"的事件），此外，官方教程中也没有提供输入截屏的实例。实际测试中，上传截屏后，阿里服务器会立刻返回`1011 (internal error) Internal server error`的错误。
 
 > *为什么xxx项目的语音对话延迟比你还低？*
 
