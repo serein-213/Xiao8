@@ -362,7 +362,7 @@
     <button id="toggle-sidebar-btn" title="折叠侧边栏">—</button>
     <button id="micButton" class="side-btn">🎤 开始聊天</button>
     <button id="muteButton" class="side-btn" disabled>⏸️ 休息一下</button>
-    <button id="screenButton" class="side-btn">🖥️ 屏幕共享</button>
+    <button id="screenButton" class="side-btn" disabled>🖥️ 屏幕共享</button>
     <button id="stopButton" class="side-btn" disabled>🛑 暂停共享</button>
     <button id="resetSessionButton" class="side-btn" disabled>👋 请她离开</button>
     <div id="status"></div>
@@ -382,13 +382,13 @@
 </div>
 
 <!-- Cubism 4核心库（支持Cubism 3/4模型） -->
-<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+<script src="/static/libs/cubismcore/live2dcubismcore.min.js"></script>
 <!-- Cubism 2.1核心库（支持旧模型） -->
-<script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+<script src="/static/libs/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
 <!-- PixiJS v7 CDN -->
-<script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/pixi.min.js"></script>
+<script src="/static/libs/npm/pixi.js@7/dist/pixi.min.js"></script>
 <!-- pixi-live2d-display v0.5.0-ls-6（RaSan147 fork，支持v7） -->
-<script src="https://cdn.jsdelivr.net/gh/RaSan147/pixi-live2d-display@v0.5.0-ls-6/dist/index.min.js"></script>
+<script src="/static/libs/gh/RaSan147/pixi-live2d-display@v0.5.0-ls-6/dist/index.min.js"></script>
 
 <script> // 聊天框自动滚动至底部，可最小化
 // 获取聊天容器元素
