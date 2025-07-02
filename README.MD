@@ -2,7 +2,7 @@
 
 ![小八Logo](assets/xiaoba_logo.jpg)
 
-# Project <small><s>Chat酱</s> <s>兰兰</s> <s>小八</s></small> Lanlan
+# Project <s>小八</s> Lanlan - 语音原生的全场景AI伙伴
 
 **新手友好、开箱即用，无需显卡的全场景AI <small><s>猫娘</s></small> 伙伴**
 
