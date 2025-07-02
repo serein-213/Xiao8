@@ -42,7 +42,7 @@
 
 1. **体验桌宠模式**。如果网页版可以正常使用，可以考虑继续通过`启动App版.bat`实现桌面穿透。注意，**请不要同时使用网页版和App版。请确认exe文件没有被系统或杀毒软件隔离。** *但是不要直接运行exe文件。直接运行exe文件会触发小八病毒模式，只能通过任务管理器手动清除进程...*
 
-*对于开发者，请在新建pyhon3.12的conda环境后，执行`pip install -r requirements.txt`安装依赖。然后执行`python memory_server.py`和`python main_server.py`。最后通过main server中指定的端口（默认为localhost:48911）访问网页版。*
+*对于开发者，请在克隆本项目后，(1)新建pyhon3.12环境。(2)执行`pip install -r requirements.txt`安装依赖。(3)复制`config/api_template.py`到`config/api.py`并进行必要配置。(4)执行`python memory_server.py`和`python main_server.py`。(5)通过main server中指定的端口（默认为localhost:48911）访问网页版。*
 
 # 进阶内容
 
@@ -62,7 +62,7 @@ Live2D模型的路径参数目前硬编码在了`main_server.py`里的`"model_pa
 
 ## D. 参与开发
 
-本项目环境依赖非常简单，请在`python3.12`环境中执行`pip install -r requirements.txt`即可。开发者建议加入企鹅群1048307485，猫娘名称见项目标题。
+本项目环境依赖非常简单，请在`python3.12`环境中执行`pip install -r requirements.txt`即可。请注意将`config/api_template.py`复制为`config/api.py`.开发者建议加入企鹅群1048307485，猫娘名称见项目标题。
 
 # TODO List（开发计划）
 
