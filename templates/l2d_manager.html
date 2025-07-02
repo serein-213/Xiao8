@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live2D 本地模型查看器 (修正版)</title>
+    <style>
+        /* CSS样式部分保持不变 */
+        html, body {
+            height: 100%; margin: 0; padding: 0; background: #fff; color: #222;
+            font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden;
+        }
+        #live2d-container {
+            position: fixed; right: 0px; bottom: 0px; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none;
+        }
+        #live2d-canvas {
+            display: block; width: 100%; height: 100%; background: transparent;
+            cursor: grab; pointer-events: auto;
+        }
+        #live2d-canvas:active { cursor: grabbing; }
+        #chat-container { pointer-events: auto; position: fixed; left: 20px; bottom: 20px; width: 340px;
+            height: 300px; background: #f7f8fa; opacity: 0.7; border-radius: 12px; padding: 16px;
+            box-sizing: border-box; z-index: 20; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            display: flex; flex-direction: column; }
+        #chat-content-wrapper { flex-grow: 1; padding-left: 8px; overflow-y: auto; opacity: 0.7; }
+        #sidebar {
+            /*background: #f7f8fa;*/
+            /*opacity: 0.7;*/
+            border-radius: 12px;
+            box-sizing: border-box;
+            box-shadow: None;
+
+            background: transparent;
+            position: fixed;
+            left: 20px;
+            top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 20;
+            min-width: 150px;
+            transition: width 0.3s ease, min-width 0.3s ease, height 0.3s ease, padding 0.3s ease, opacity 0.3s;
+        }
+        .side-btn { padding: 10px 20px; border-radius: 8px; border: none; background: #333;
+            color: #fff; font-size: 1rem; cursor: pointer; margin-bottom: 4px;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s; }
+        .side-btn:active {
+            background: #555;
+        }
+
+        .side-btn:disabled {
+            background: #e0e0e0;
+            color: #888;
+            cursor: not-allowed;
+            border: 1px solid #ccc;
+            opacity: 0.7;
+        }
+
+        .side-btn:hover:not(:disabled) {
+            background: #4f8cff;
+            color: #fff;
+        }
+        #status {
+            /*margin-top: 5px;*/
+            color: #4f8cff;
+            background: transparent;
+            font-size: 0.95rem;
+            max-width: 150px;
+            word-break: break-all;
+        }
+        #model-list-container { display: none; flex-direction: column; gap: 8px; margin-top: 10px; width: 130px;}
+        .model-select-btn { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc;
+            background: #fff; cursor: pointer; text-align: left; }
+        .model-select-btn:hover { background: #e8f0fe; border-color: #4f8cff; }
+        .save-btn { padding: 10px 20px; border-radius: 8px; border: none; background: #4f8cff;
+            color: #fff; font-size: 1rem; cursor: pointer; margin-bottom: 4px;
+            transition: background 0.2s, color 0.2s, box-shadow 0.2s; }
+        .save-btn:hover { background: #2662c8; }
+        .save-btn:disabled { background: #b0c4de; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <button id="changeModelBtn" class="side-btn">🔄️ 更换模型</button>
+    <div id="model-list-container"></div>
+    <button id="savePreferencesBtn" class="save-btn" disabled>💾 保存设置</button>
+    <button id="micButton" class="side-btn" disabled>🎤 开始聊天</button>
+    <button id="muteButton" class="side-btn" disabled>⏸️ 休息一下</button>
+    <div id="status">正在从服务器获取模型列表...</div>
+    <!-- <button id="screenButton" class="side-btn" disabled>🖥️ 屏幕共享</button>
+    <button id="stopButton" class="side-btn" disabled>🛑 暂停共享</button> -->
+    <!-- <button id="resetSessionButton" class="side-btn" disabled>👋 请她离开</button> -->
+</div>
+<div id="chat-container">
+    <div id="chat-content-wrapper"><p style="color: #888">对话历史界面<br><br>...现在是一片空白...</p></div>
+</div>
+<div id="live2d-container"><canvas id="live2d-canvas"></canvas></div>
+
+<script src="/static/libs/cubismcore/live2dcubismcore.min.js"></script>
+<script src="/static/libs/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+<script src="/static/libs/npm/pixi.js@7/dist/pixi.min.js"></script>
+<script src="/static/libs/gh/RaSan147/pixi-live2d-display@v0.5.0-ls-6/dist/index.min.js"></script>
+
+<script>
+    (async function () {
+        const app = new PIXI.Application({
+            view: document.getElementById('live2d-canvas'), resizeTo: document.getElementById('live2d-container'),
+            autoStart: true, transparent: true, backgroundAlpha: 0
+        });
+        window.PIXI = PIXI;
+        const statusDiv = document.getElementById('status');
+        let currentModel = null;
+        let currentModelInfo = null;
+
+        // 加载用户偏好
+        async function loadUserPreferences() {
+            try {
+                const response = await fetch('/api/preferences');
+                if (response.ok) {
+                    return await response.json();
+                }
+            } catch (error) {
+                console.warn('加载用户偏好失败:', error);
+            }
+            return [];
+        }
+
+        // 保存用户偏好
+        async function saveUserPreferences() {
+            if (!currentModel || !currentModelInfo) {
+                statusDiv.innerText = "没有可保存的设置";
+                return;
+            }
+
+            try {
+                const preferences = {
+                    model_path: currentModelInfo.path,
+                    position: {
+                        x: currentModel.x,
+                        y: currentModel.y
+                    },
+                    scale: {
+                        x: currentModel.scale.x,
+                        y: currentModel.scale.y
+                    }
+                };
+
+                const response = await fetch('/api/preferences', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(preferences)
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    statusDiv.innerText = "设置已保存！";
+                    setTimeout(() => {
+                        if (currentModelInfo) {
+                            statusDiv.innerText = `当前模型: ${currentModelInfo.name}`;
+                        }
+                    }, 2000);
+                } else {
+                    statusDiv.innerText = `保存失败: ${result.error}`;
+                }
+            } catch (error) {
+                console.error("保存偏好失败:", error);
+                statusDiv.innerText = "保存失败，请检查网络连接";
+            }
+        }
+
+        async function setupModelList() {
+            try {
+                const response = await fetch('/api/models');
+                if (!response.ok) throw new Error('网络响应错误');
+                const modelsFromServer = await response.json();
+                const modelListContainer = document.getElementById('model-list-container');
+                modelListContainer.innerHTML = '';
+                
+                if (modelsFromServer.length > 0) {
+                    modelsFromServer.forEach(modelInfo => {
+                        const btn = document.createElement('button');
+                        btn.innerText = modelInfo.name;
+                        btn.className = 'model-select-btn';
+                        btn.onclick = async () => { 
+                            const preferences = await loadUserPreferences();
+                            // 查找该模型的历史偏好
+                            const modelPreferences = preferences.find(pref => pref.model_path === modelInfo.path);
+                            await loadModel(modelInfo, modelPreferences || null); 
+                            
+                            // 将该模型设为首选
+                            try {
+                                await fetch('/api/preferences/set-preferred', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({ model_path: modelInfo.path })
+                                });
+                            } catch (error) {
+                                console.warn('设置首选模型失败:', error);
+                            }
+                            
+                            modelListContainer.style.display = 'none'; 
+                            document.getElementById('changeModelBtn').innerText = '🔄️ 更换模型'; 
+                        };
+                        modelListContainer.appendChild(btn);
+                    });
+                    
+                    // 加载用户偏好
+                    const preferences = await loadUserPreferences();
+                    console.log('加载的用户偏好:', preferences);
+                    let modelToLoad = modelsFromServer[0]; // 默认加载第一个模型
+                    let modelPreferences = null;
+                    
+                    // 如果有保存的偏好，尝试找到对应的模型
+                    if (preferences.length > 0 && preferences[0].model_path) {
+                        const savedModel = modelsFromServer.find(model => model.path === preferences[0].model_path);
+                        console.log('查找保存的模型:', preferences[0].model_path, '找到:', savedModel);
+                        if (savedModel) {
+                            modelToLoad = savedModel;
+                            modelPreferences = preferences[0];
+                            statusDiv.innerText = `发现 ${modelsFromServer.length} 个模型，正在加载首选模型: ${savedModel.name}`;
+                        } else {
+                            statusDiv.innerText = `发现 ${modelsFromServer.length} 个模型，首选模型不可用，加载默认模型。`;
+                        }
+                    } else {
+                        statusDiv.innerText = `发现 ${modelsFromServer.length} 个模型，请点击按钮选择。`;
+                    }
+                    
+                    // 加载模型并应用偏好设置
+                    await loadModel(modelToLoad, modelPreferences);
+                } else {
+                    statusDiv.innerText = '服务器的 "static" 文件夹下未发现任何模型。';
+                }
+            } catch (error) { console.error("获取模型列表失败:", error); statusDiv.innerText = '获取模型列表失败，请检查后端服务是否正常运行。'; }
+        }
+
+        async function loadModel(modelInfo, preferences = {}) {
+            if (!modelInfo || !modelInfo.path) { statusDiv.innerText = "错误：模型路径无效。"; return; }
+            if (currentModel) { app.stage.removeChild(currentModel); currentModel.destroy({ children: true }); }
+            
+            currentModelInfo = modelInfo;
+            statusDiv.innerText = `正在加载模型: ${modelInfo.name}...`;
+            try {
+                const model = await PIXI.live2d.Live2DModel.from(modelInfo.path);
+                currentModel = model;
+                
+                // 应用用户偏好或使用默认设置
+                console.log('应用偏好设置:', preferences);
+                if (preferences && preferences.scale && preferences.position) {
+                    // 使用保存的偏好设置
+                    console.log('使用保存的设置 - 缩放:', preferences.scale, '位置:', preferences.position);
+                    model.scale.set(preferences.scale.x, preferences.scale.y);
+                    model.x = preferences.position.x;
+                    model.y = preferences.position.y;
+                    model.anchor.set(0.65, 0.75); // 确保设置anchor
+                    statusDiv.innerText = `加载成功: ${modelInfo.name}，已应用保存的设置。`;
+                } else {
+                    console.log('使用默认设置');
+                    // 使用默认设置
+                    if (false) {
+                        const scale = Math.min(0.5, window.innerHeight * 1.3 / 4000, window.innerWidth * 1.2 / 2000);
+                        model.scale.set(scale);
+                        model.x = app.renderer.width * 0.5;
+                        model.y = app.renderer.height * 0.28;
+                        model.anchor.set(0.5, 0.1);
+                    } else {
+                        const scale = Math.min(0.5, (window.innerHeight * 0.75) / 7000, (window.innerWidth * 0.6) / 7000);
+                        model.scale.set(scale);
+                        model.x = app.renderer.width;
+                        model.y = app.renderer.height;
+                        model.anchor.set(0.65, 0.75);
+                    }
+                    statusDiv.innerText = `加载成功: ${modelInfo.name}，使用默认设置。`;
+                }
+
+                app.stage.addChild(model);
+
+                
+
+                model.interactive = true;
+                app.stage.interactive = true;
+                app.stage.hitArea = app.screen;
+                let isDragging = false;
+                let dragStartPos = new PIXI.Point();
+
+                model.on('pointerdown', (event) => {
+                    isDragging = true;
+                    // 记录鼠标点击位置相对于模型的偏移量
+                    const globalPos = event.data.global;
+                    dragStartPos.x = globalPos.x - model.x;
+                    dragStartPos.y = globalPos.y - model.y;
+
+                    document.getElementById('live2d-canvas').style.cursor = 'grabbing';
+                });
+
+                const onDragEnd = () => {
+                    if (isDragging) {
+                        isDragging = false;
+                        document.getElementById('live2d-canvas').style.cursor = 'grab';
+                    }
+                };
+                app.stage.on('pointerup', onDragEnd);
+                app.stage.on('pointerupoutside', onDragEnd);
+
+                app.stage.on('pointermove', (event) => {
+                    if (isDragging) {
+                        // 使用鼠标位置减去偏移量来设置模型位置
+                        const newPosition = event.data.global;
+                        model.x = newPosition.x - dragStartPos.x;
+                        model.y = newPosition.y - dragStartPos.y;
+                    }
+                });
+
+                const onWheelScroll = (event) => { if (!currentModel) return; event.preventDefault(); const scaleFactor = 1.1; const oldScale = currentModel.scale.x; let newScale = event.deltaY < 0 ? oldScale * scaleFactor : oldScale / scaleFactor; currentModel.scale.set(newScale); };
+                const view = app.view;
+                if (view.lastWheelListener) { view.removeEventListener('wheel', view.lastWheelListener); }
+                view.addEventListener('wheel', onWheelScroll, { passive: false });
+                view.lastWheelListener = onWheelScroll;
+                
+                // 保持之前的状态信息，不覆盖偏好应用信息
+                if (!preferences.scale || !preferences.position) {
+                    statusDiv.innerText = `加载成功: ${modelInfo.name}。您可以拖拽和滚轮缩放模型。`;
+                }
+                document.getElementById('savePreferencesBtn').disabled = false;
+            } catch (error) { console.error("加载模型失败:", error); statusDiv.innerText = `加载模型 "${modelInfo.name}" 失败。请检查路径或F12查看控制台错误。`; }
+        }
+
+        document.getElementById('changeModelBtn').addEventListener('click', () => {
+            const modelListContainer = document.getElementById('model-list-container');
+            const isVisible = modelListContainer.style.display === 'flex';
+            if (isVisible) {
+                modelListContainer.style.display = 'none';
+                document.getElementById('changeModelBtn').innerText = '🔄️ 更换模型';
+            } else {
+                modelListContainer.style.display = 'flex';
+                document.getElementById('changeModelBtn').innerText = '🔼 收起列表';
+                statusDiv.innerText = "自动检索Live2D模型...\n请将模型文件置于\n/static文件夹内。";
+            }
+        });
+
+        // 保存偏好按钮事件监听器
+        document.getElementById('savePreferencesBtn').addEventListener('click', saveUserPreferences);
+        
+        setupModelList();
+
+    })();
+</script>
+
+</body>
+</html>

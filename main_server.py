@@ -12,6 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from main_helper import core as core, cross_server as cross_server
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
+from utils.preferences import load_user_preferences, update_model_preferences, validate_model_preferences, get_model_preferences, get_preferred_model_path, move_model_to_top
+from utils.frontend_utils import find_models
 templates = Jinja2Templates(directory="./")
 from config import LANLAN_PROMPT, MASTER_NAME, her_name, MAIN_SERVER_PORT
 
@@ -74,17 +76,61 @@ async def get_default_index(request: Request): # 这个接口在直播版代码�
     return templates.TemplateResponse("templates/index.html", {
         "request": request,
         "lanlan_name": her_name,
-        "model_path": f"/static/live2d/mao_pro.model3.json" 
+        "model_path": f"/static/mao_pro/mao_pro.model3.json" 
     })
 
-@app.get("/{lanlan_name}", response_class=HTMLResponse)
-async def get_index(request: Request, lanlan_name: str):
-    # Point FileResponse to the correct path relative to where server.py is run
-    return templates.TemplateResponse("templates/index.html", {
-        "request": request,
-        "lanlan_name": lanlan_name,
-        "model_path": f"/static/live2d/mao_pro.model3.json" # TODO: 根据lanlan_name动态加载模型. 实现起来很简单，但是用户需要手动配置、还需要调整大小和位置，当前版本先不增加复杂度
-    })
+@app.get("/api/preferences")
+async def get_preferences():
+    """获取用户偏好设置"""
+    preferences = load_user_preferences()
+    return preferences
+
+@app.post("/api/preferences")
+async def save_preferences(request: Request):
+    """保存用户偏好设置"""
+    try:
+        data = await request.json()
+        if not data:
+            return {"success": False, "error": "无效的数据"}
+        
+        # 验证偏好数据
+        if not validate_model_preferences(data):
+            return {"success": False, "error": "偏好数据格式无效"}
+        
+        # 更新偏好
+        if update_model_preferences(data['model_path'], data['position'], data['scale']):
+            return {"success": True, "message": "偏好设置已保存"}
+        else:
+            return {"success": False, "error": "保存失败"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/models")
+async def get_models():
+    """
+    API接口，调用扫描函数并以JSON格式返回找到的模型列表。
+    """
+    models = find_models()
+    return models
+
+@app.post("/api/preferences/set-preferred")
+async def set_preferred_model(request: Request):
+    """设置首选模型"""
+    try:
+        data = await request.json()
+        if not data or 'model_path' not in data:
+            return {"success": False, "error": "无效的数据"}
+        
+        if move_model_to_top(data['model_path']):
+            return {"success": True, "message": "首选模型已更新"}
+        else:
+            return {"success": False, "error": "模型不存在或更新失败"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -170,6 +216,26 @@ async def websocket_endpoint(websocket: WebSocket, lanlan_name: str):
     finally:
         logger.info(f"Cleaning up WebSocket resources: {websocket.client}")
         await session_manager[lanlan_name].cleanup()
+
+@app.get("/l2d", response_class=HTMLResponse)
+async def get_l2d_manager(request: Request):
+    """渲染Live2D模型管理器页面"""
+    return templates.TemplateResponse("templates/l2d_manager.html", {
+        "request": request
+    })
+
+@app.get("/{lanlan_name}", response_class=HTMLResponse)
+async def get_index(request: Request, lanlan_name: str):
+    # 获取首选模型路径
+    model_path = get_preferred_model_path() or f"/static/mao_pro/mao_pro.model3.json"
+    
+    # Point FileResponse to the correct path relative to where server.py is run
+    return templates.TemplateResponse("templates/index.html", {
+        "request": request,
+        "lanlan_name": lanlan_name,
+        "model_path": model_path
+    })
+
 
 # --- Run the Server ---
 # (Keep your existing __main__ block)

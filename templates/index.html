@@ -44,7 +44,7 @@
             position: fixed;
             right: 0px;
             bottom: 0px;
-            width: 30%;
+            width: 100%;
             height: 100%;
             z-index: 10;
             pointer-events: none;
@@ -598,6 +598,20 @@ if (chatContentWrapper) {
     window.PIXI = PIXI;
     const cubism4Model = "{{model_path}}";  
     const {Live2DModel} = PIXI.live2d;
+    
+    // 加载用户偏好
+    async function loadUserPreferences() {
+        try {
+            const response = await fetch('/api/preferences');
+            if (response.ok) {
+                return await response.json();
+            }
+        } catch (error) {
+            console.warn('加载用户偏好失败:', error);
+        }
+        return [];
+    }
+    
     (async function () {
         // 帧率控制函数
         function setupFrameSkipping() {
@@ -629,45 +643,68 @@ if (chatContentWrapper) {
             transparent: true,
             backgroundAlpha: 0
         });
+        
+        // 加载用户偏好
+        const preferences = await loadUserPreferences();
+        
         const model = await Live2DModel.from(cubism4Model);
         if (window.innerWidth <= 768){  //移动端
-            const scale = Math.min(
-                0.5,
-              window.innerHeight * 1.3 / 4000,
-              window.innerWidth * 1.2 / 2000
-            );
-            model.scale.set(scale);
-            model.x = pixi_app.renderer.width*0.5;
-            model.y = pixi_app.renderer.height*0.28;//pixi_app.renderer.height*0.5;
+            // 应用用户偏好或使用默认值
+            if (preferences.length > 0 && preferences[0].scale && preferences[0].position) {
+                model.scale.set(preferences[0].scale.x, preferences[0].scale.y);
+                model.x = preferences[0].position.x;
+                model.y = preferences[0].position.y;
+            } else {
+                const scale = Math.min(
+                    0.5,
+                  window.innerHeight * 1.3 / 4000,
+                  window.innerWidth * 1.2 / 2000
+                );
+                model.scale.set(scale);
+                model.x = pixi_app.renderer.width*0.5;
+                model.y = pixi_app.renderer.height*0.28;
+            }
             model.anchor.set(0.5, 0.1);
             pixi_app.stage.addChild(model);
             window.addEventListener('resize', () => {
                 // 更新模型位置
-                model.x = pixi_app.renderer.width*0.5;
-                model.y = pixi_app.renderer.height*0.28;//pixi_app.renderer.height*0.5;
+                if (preferences.length > 0 && preferences[0].position) {
+                    model.x = preferences[0].position.x;
+                    model.y = preferences[0].position.y;
+                } else {
+                    model.x = pixi_app.renderer.width*0.5;
+                    model.y = pixi_app.renderer.height*0.28;
+                }
             });
         }
         else {
-            const scale = Math.min(
-                0.5,
-              (window.innerHeight * 0.75) / 7000, // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
-              (window.innerWidth * 0.6) / 7000 // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
-            );
-            model.scale.set(scale);
-            // model.scale.set(1.0, 1.0);
-            // model.scale.set(0.18, 0.18);
-            model.x = pixi_app.renderer.width;
-            model.y = pixi_app.renderer.height;
-            // model.anchor.set(0.9, 0.68);
-            // model.anchor.set(0.7, 0.65);
-            model.anchor.set(0.65, 0.75); // TODO:可以根据模型名称自动调整相关参数，或者从后端植入相关参数
-            // model.anchor.set(1., 1.);
+            // 应用用户偏好或使用默认值
+            if (preferences.length > 0 && preferences[0].scale && preferences[0].position) {
+                model.scale.set(preferences[0].scale.x, preferences[0].scale.y);
+                model.x = preferences[0].position.x;
+                model.y = preferences[0].position.y;
+            } else {
+                const scale = Math.min(
+                    0.5,
+                  (window.innerHeight * 0.75) / 7000,
+                  (window.innerWidth * 0.6) / 7000
+                );
+                model.scale.set(scale);
+                model.x = pixi_app.renderer.width;
+                model.y = pixi_app.renderer.height;
+            }
+            model.anchor.set(0.65, 0.75);
             pixi_app.stage.addChild(model);
 
             window.addEventListener('resize', () => {
                 // 更新模型位置
-                model.x = pixi_app.renderer.width;
-                model.y = pixi_app.renderer.height;
+                if (preferences.length > 0 && preferences[0].position) {
+                    model.x = preferences[0].position.x;
+                    model.y = preferences[0].position.y;
+                } else {
+                    model.x = pixi_app.renderer.width;
+                    model.y = pixi_app.renderer.height;
+                }
             });
             // setupFrameSkipping();
         }

@@ -14,6 +14,9 @@
 
 import re
 import regex
+import os
+import logging
+
 chinese_char_pattern = re.compile(r'[\u4e00-\u9fff]+')
 bracket_patterns = [re.compile(r'\(.*?\)'),
                    re.compile('（.*?）')]
@@ -142,3 +145,39 @@ def is_only_punctuation(text):
     # Regular expression: Match strings that consist only of punctuation marks or are empty.
     punctuation_pattern = r'^[\p{P}\p{S}]*$'
     return bool(regex.fullmatch(punctuation_pattern, text))
+
+
+def find_models():
+    """
+    递归扫描整个 'static' 文件夹，查找所有包含 '.model3.json' 文件的子目录。
+    """
+    found_models = []
+    search_root_dir = 'static'
+    
+    if not os.path.exists(search_root_dir):
+        logging.warning(f"警告：指定的静态文件夹路径不存在: {search_root_dir}")
+        return []
+
+    # os.walk会遍历指定的根目录下的所有文件夹和文件
+    for root, dirs, files in os.walk(search_root_dir):
+        for file in files:
+            if file.endswith('.model3.json'):
+                # 获取模型名称 (使用其所在的文件夹名，更加直观)
+                model_name = os.path.basename(root)
+                
+                # 构建可被浏览器访问的URL路径
+                # 1. 计算文件相对于 static_folder 的路径
+                relative_path = os.path.relpath(os.path.join(root, file), search_root_dir)
+                # 2. 将本地路径分隔符 (如'\') 替换为URL分隔符 ('/')
+                model_path = relative_path.replace(os.path.sep, '/')
+                
+                found_models.append({
+                    "name": model_name,
+                    "path": f"/static/{model_path}"
+                })
+                
+                # 优化：一旦在某个目录找到模型json，就无需再继续深入该目录的子目录
+                dirs[:] = []
+                break
+                
+    return found_models
