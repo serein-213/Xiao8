@@ -8,13 +8,13 @@ TIME_COMPRESSED_TABLE_NAME = "time_indexed_compressed"
 '''
 ↓↓↓ 核心人设在这里 ↓↓↓
 '''
-MASTER_NAME = '哥哥'
-her_name = "test" 
+MASTER_NAME = '主人'
+her_name = "喵喵" 
 master_basic_config = {'性别': '男', '昵称': MASTER_NAME}
 
 lanlan_basic_config = {her_name: {'性别': '女',
                                 '年龄': 15,
-                                '昵称': ["T酱", "小T"],
+                                '昵称': ["喵", "喵喵"],
                                 }}
 '''
 ↑↑↑ 核心人设在这里 ↑↑↑

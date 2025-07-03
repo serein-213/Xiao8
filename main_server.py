@@ -215,6 +215,9 @@ async def websocket_endpoint(websocket: WebSocket, lanlan_name: str):
             pass
     finally:
         logger.info(f"Cleaning up WebSocket resources: {websocket.client}")
+        # 确保清理session manager中的websocket引用
+        if session_manager[lanlan_name].websocket == websocket:
+            session_manager[lanlan_name].websocket = None
         await session_manager[lanlan_name].cleanup()
 
 @app.get("/l2d", response_class=HTMLResponse)

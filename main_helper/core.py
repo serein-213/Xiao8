@@ -168,16 +168,13 @@ class LLMSessionManager:
     async def handle_audio_data(self, audio_data: bytes):
         """Qwen音频回调：推送音频到WebSocket前端"""
         if not self.use_tts:
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                # 这里假设audio_data为PCM16字节流，直接推送
-                audio = np.frombuffer(audio_data, dtype=np.int16)
-                audio = (resample(audio.astype(np.float32) / 32768.0, orig_sr=24000, target_sr=48000)*32767.).clip(-32768, 32767).astype(np.int16)
+            # 这里假设audio_data为PCM16字节流，直接推送
+            audio = np.frombuffer(audio_data, dtype=np.int16)
+            audio = (resample(audio.astype(np.float32) / 32768.0, orig_sr=24000, target_sr=48000)*32767.).clip(-32768, 32767).astype(np.int16)
 
-                await self.send_speech(audio.tobytes())
-                # 你可以根据需要加上格式、isNewMessage等标记
-                # await self.websocket.send_json({"type": "cozy_audio", "format": "blob", "isNewMessage": True})
-            else:
-                pass  # websocket未连接时忽略
+            await self.send_speech(audio.tobytes())
+            # 你可以根据需要加上格式、isNewMessage等标记
+            # await self.websocket.send_json({"type": "cozy_audio", "format": "blob", "isNewMessage": True})
 
     async def handle_input_transcript(self, transcript: str):
         """Qwen输入转录回调：同步转录文本到消息队列和缓存"""
@@ -202,29 +199,26 @@ class LLMSessionManager:
 
     async def send_lanlan_response(self, text: str, is_first_chunk: bool = False):
         """Qwen输出转录回调：可用于前端显示/缓存/同步。"""
-        try:
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                text = self.emotion_pattern.sub('', text)
-                message = {
-                    "type": "gemini_response",
-                    "text": text,
-                    "isNewMessage": is_first_chunk  # 标记是否是新消息的第一个chunk
-                }
-                await self.websocket.send_json(message)
-                self.sync_message_queue.put({"type": "json", "data": message})
-                if hasattr(self, 'is_preparing_new_session') and self.is_preparing_new_session:
-                    if not hasattr(self, 'message_cache_for_new_session'):
-                        self.message_cache_for_new_session = []
-                    if len(self.message_cache_for_new_session) == 0 or self.message_cache_for_new_session[-1]['role']==MASTER_NAME:
-                        self.message_cache_for_new_session.append(
-                            {"role": self.lanlan_name, "text": text})
-                    elif self.message_cache_for_new_session[-1]['role'] == self.lanlan_name:
-                        self.message_cache_for_new_session[-1]['text'] += text
-
-        except WebSocketDisconnect:
-            logger.info("Frontend disconnected.")
-        except Exception as e:
-            logger.error(f"💥 WS Send Lanlan Response Error: {e}")
+        text = self.emotion_pattern.sub('', text)
+        message = {
+            "type": "gemini_response",
+            "text": text,
+            "isNewMessage": is_first_chunk  # 标记是否是新消息的第一个chunk
+        }
+        
+        async def _send():
+            await self.websocket.send_json(message)
+        
+        if await self._safe_websocket_send(_send, "Send Lanlan Response"):
+            self.sync_message_queue.put({"type": "json", "data": message})
+            if hasattr(self, 'is_preparing_new_session') and self.is_preparing_new_session:
+                if not hasattr(self, 'message_cache_for_new_session'):
+                    self.message_cache_for_new_session = []
+                if len(self.message_cache_for_new_session) == 0 or self.message_cache_for_new_session[-1]['role']==MASTER_NAME:
+                    self.message_cache_for_new_session.append(
+                        {"role": self.lanlan_name, "text": text})
+                elif self.message_cache_for_new_session[-1]['role'] == self.lanlan_name:
+                    self.message_cache_for_new_session[-1]['text'] += text
         
     async def handle_connection_error(self):
         logger.info("💥 Session closed by API Server.")
@@ -309,7 +303,25 @@ class LLMSessionManager:
         try:
             # 获取初始 prompt
             initial_prompt = self.lanlan_prompt
-            initial_prompt += requests.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}").text
+            
+            # 尝试连接memory server获取历史记录
+            try:
+                memory_response = requests.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}", timeout=5)
+                if memory_response.status_code == 200:
+                    initial_prompt += memory_response.text
+                    logger.info("Memory server connected successfully")
+                else:
+                    logger.warning(f"Memory server returned status {memory_response.status_code}")
+                    initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n"
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                logger.warning(f"Memory server not available (port {MEMORY_SERVER_PORT}): {e}")
+                logger.warning("继续运行但不使用历史记忆功能。如需使用记忆功能，请启动memory server:")
+                logger.warning(f"python memory_server.py")
+                initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n"
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to memory server: {e}")
+                initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n"
+                
             logger.info("====Initial Prompt=====")
             logger.info(initial_prompt)
 
@@ -336,16 +348,14 @@ class LLMSessionManager:
             await self.cleanup()
 
     async def send_user_activity(self):
-        try:
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                message = {
-                    "type": "user_activity"
-                }
-                await self.websocket.send_json(message)
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.error(f"💥 WS Send User Activity Error: {e}")
+        message = {
+            "type": "user_activity"
+        }
+        
+        async def _send():
+            await self.websocket.send_json(message)
+        
+        await self._safe_websocket_send(_send, "Send User Activity")
 
     def _convert_cache_to_str(self, cache):
         """[热切换相关] 将cache转换为字符串"""
@@ -376,9 +386,23 @@ class LLMSessionManager:
             
             initial_prompt = self.lanlan_prompt
             self.initial_cache_snapshot_len = len(self.message_cache_for_new_session)
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}")
-                initial_prompt += resp.text + self._convert_cache_to_str(self.message_cache_for_new_session)
+            
+            # 尝试连接memory server获取历史记录（异步版本）
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"http://localhost:{MEMORY_SERVER_PORT}/new_dialog/{self.lanlan_name}")
+                    if resp.status_code == 200:
+                        initial_prompt += resp.text + self._convert_cache_to_str(self.message_cache_for_new_session)
+                        logger.info("Memory server connected successfully (background prep)")
+                    else:
+                        logger.warning(f"Memory server returned status {resp.status_code} (background prep)")
+                        initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n" + self._convert_cache_to_str(self.message_cache_for_new_session)
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                logger.warning(f"Memory server not available during background prep: {e}")
+                initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n" + self._convert_cache_to_str(self.message_cache_for_new_session)
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to memory server during background prep: {e}")
+                initial_prompt += f"\n========{self.lanlan_name}的内心活动========\n现在开始新的对话。\n" + self._convert_cache_to_str(self.message_cache_for_new_session)
             # print(initial_prompt)
             await self.pending_session.connect(initial_prompt, native_audio = not self.use_tts)
 
@@ -639,74 +663,99 @@ class LLMSessionManager:
     async def cleanup(self):
         await self.end_session()
 
-    async def send_status(self, message: str): # 向前端发送status message
+    async def _safe_websocket_send(self, send_func, error_context="WebSocket Send"):
+        """安全的WebSocket发送方法，防止在连接关闭时发送消息"""
         try:
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                data = json.dumps({"type": "status", "message": message})
-                await self.websocket.send_text(data)
-
-                # 同步到同步服务器
-                self.sync_message_queue.put({'type': 'json', 'data': {"type": "status", "message": message}})
+            if not self.websocket:
+                return False
+            
+            # 检查WebSocket状态
+            if not hasattr(self.websocket, 'client_state'):
+                return False
+                
+            from starlette.websockets import WebSocketState
+            if self.websocket.client_state != WebSocketState.CONNECTED:
+                return False
+                
+            # 执行发送操作
+            await send_func()
+            return True
+            
         except WebSocketDisconnect:
-            pass
+            logger.debug(f"{error_context}: WebSocket disconnected")
+            return False
+        except RuntimeError as e:
+            if "Cannot call" in str(e) and "close message has been sent" in str(e):
+                logger.debug(f"{error_context}: WebSocket already closed")
+                # 清理WebSocket引用
+                self.websocket = None
+                return False
+            else:
+                logger.error(f"💥 {error_context} Runtime Error: {e}")
+                return False
         except Exception as e:
-            logger.error(f"💥 WS Send Status Error: {e}")
+            logger.error(f"💥 {error_context} Error: {e}")
+            return False
+
+    async def send_status(self, message: str): # 向前端发送status message
+        async def _send():
+            data = json.dumps({"type": "status", "message": message})
+            await self.websocket.send_text(data)
+        
+        if await self._safe_websocket_send(_send, "Send Status"):
+            # 同步到同步服务器
+            self.sync_message_queue.put({'type': 'json', 'data': {"type": "status", "message": message}})
 
     async def send_expressions(self, prompt=""):
         '''这个函数在直播版本中有用，用于控制Live2D模型的表情动作。但是在开源版本目前没有实际用途。'''
-        try:
-            expression_map = {}
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                if prompt in expression_map:
-                    if self.current_expression:
-                        await self.websocket.send_json({
-                            "type": "expression",
-                            "message": '-',
-                        })
+        expression_map = {}
+        
+        if prompt in expression_map:
+            if self.current_expression:
+                async def _send_clear():
                     await self.websocket.send_json({
                         "type": "expression",
-                        "message": expression_map[prompt] + '+',
+                        "message": '-',
                     })
-                    self.current_expression = expression_map[prompt]
-                else:
-                    if self.current_expression:
-                        await self.websocket.send_json({
-                            "type": "expression",
-                            "message": '-',
-                        })
-
-                if prompt in expression_map:
-                    self.sync_message_queue.put({"type": "json",
-                                                 "data": {
+                await self._safe_websocket_send(_send_clear, "Send Expression Clear")
+                
+            async def _send_new():
+                await self.websocket.send_json({
+                    "type": "expression",
+                    "message": expression_map[prompt] + '+',
+                })
+            
+            if await self._safe_websocket_send(_send_new, "Send Expression New"):
+                self.current_expression = expression_map[prompt]
+                self.sync_message_queue.put({"type": "json",
+                                             "data": {
+                    "type": "expression",
+                    "message": expression_map[prompt] + '+',
+                }})
+        else:
+            if self.current_expression:
+                async def _send_clear():
+                    await self.websocket.send_json({
                         "type": "expression",
-                        "message": expression_map[prompt] + '+',
-                    }})
-                else:
-                    if self.current_expression:
-                        self.sync_message_queue.put({"type": "json",
-                         "data": {
-                             "type": "expression",
-                             "message": '-',
-                         }})
-                        self.current_expression = None
-
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.error(f"💥 WS Send Response Error: {e}")
+                        "message": '-',
+                    })
+                
+                if await self._safe_websocket_send(_send_clear, "Send Expression Clear"):
+                    self.sync_message_queue.put({"type": "json",
+                     "data": {
+                         "type": "expression",
+                         "message": '-',
+                     }})
+                    self.current_expression = None
 
 
     async def send_speech(self, tts_audio):
-        try:
-            if self.websocket and hasattr(self.websocket, 'client_state') and self.websocket.client_state == self.websocket.client_state.CONNECTED:
-                await self.websocket.send_bytes(tts_audio)
-
-                # 同步到同步服务器
-                self.sync_message_queue.put({"type": "binary", "data": tts_audio})
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.error(f"💥 WS Send Response Error: {e}")
+        async def _send():
+            await self.websocket.send_bytes(tts_audio)
+        
+        if await self._safe_websocket_send(_send, "Send Speech"):
+            # 同步到同步服务器
+            self.sync_message_queue.put({"type": "binary", "data": tts_audio})
 
     async def tts_response_handler(self):
         while True:
